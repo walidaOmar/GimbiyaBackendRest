@@ -1,0 +1,7 @@
+{
+  "watch": ["backend"],
+  "ext":   "js,json",
+  "ignore":["backend/logs", "node_modules"],
+  "exec":  "node backend/index.js",
+  "env":   { "NODE_ENV": "development" }
+}
