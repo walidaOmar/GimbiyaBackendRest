@@ -7,71 +7,88 @@ import { connectDB } from "./db/connectDB.js";
 import { connectRedis } from "./config/redis.js";
 import { initFirebase } from "./config/firebase.js";
 
-import authRoutes     from "./routes/auth.route.js";
-import userRoutes     from "./routes/user.route.js";
-import productRoutes  from "./routes/product.route.js";
-import orderRoutes    from "./routes/order.route.js";
-import stockRoutes    from "./routes/stock.route.js";
+import authRoutes from "./routes/auth.route.js";
+import userRoutes from "./routes/user.route.js";
+import productRoutes from "./routes/product.route.js";
+import orderRoutes from "./routes/order.route.js";
+import stockRoutes from "./routes/stock.route.js";
 import deliveryRoutes from "./routes/delivery.route.js";
-import ceoRoutes      from "./routes/ceo.route.js";
+import ceoRoutes from "./routes/ceo.route.js";
 import affiliateRoutes from "./routes/affiliate.route.js";
+
+import { handleSSEConnection } from "./utils/sseService.js";
+import { verifyToken } from "./middleware/verifyToken.js";
 
 dotenv.config();
 
-const app  = express();
+const app = express();
 const PORT = process.env.PORT || 8080;
-
-// ── CORS ──────────────────────────────────────────────────────────────────────
-const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || "http://localhost:5173")
+const isProduction = process.env.NODE_ENV === "production";
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:3000")
   .split(",")
-  .map((o) => o.trim());
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 app.use(
   cors({
-    origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-      cb(new Error(`CORS: origin ${origin} not allowed`));
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (isProduction) {
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+      } else {
+        return callback(null, true);
+      }
+      callback(new Error(`CORS: origin ${origin} not allowed`));
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
+app.options("*", cors());
 
-// ── BODY & COOKIE ─────────────────────────────────────────────────────────────
-app.use(express.json({ limit: "10mb" })); // 10mb for base64 signatures
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// ── HEALTH CHECK ──────────────────────────────────────────────────────────────
-app.get("/health", (req, res) => {
-  res.json({
-    status:    "GIMBIYA MALL BACKEND ONLINE",
-    version:   "1.0.0",
-    timestamp: new Date().toISOString(),
-    env:       process.env.NODE_ENV,
-  });
+const availableRoutes = [
+  "GET /health",
+  "GET /",
+  "POST /api/auth/signup",
+  "POST /api/auth/login",
+  "GET /api/auth/check-auth",
+  "GET /api/products",
+  "POST /api/orders/checkout",
+  "GET /api/events/subscribe",
+];
+
+app.get("/", (req, res) => {
+  res.json({ status: "GIMBIYA MALL BACKEND ONLINE", version: "2.0.0" });
 });
 
-// ── API ROUTES ────────────────────────────────────────────────────────────────
-app.use("/api/auth",     authRoutes);
-app.use("/api/users",    userRoutes);
-app.use("/api/products", productRoutes);
-app.use("/api/orders",   orderRoutes);
-app.use("/api/stock",    stockRoutes);
-app.use("/api/delivery", deliveryRoutes);
-app.use("/api/ceo",      ceoRoutes);
-app.use("/api/affiliate",affiliateRoutes);
+app.get("/health", (req, res) => {
+  res.json({ status: "GIMBIYA MALL BACKEND ONLINE", version: "2.0.0" });
+});
 
-// ── SSE — Real-Time Events ─────────────────────────────────────────────────────
-import { handleSSEConnection } from "./utils/sseService.js";
-import { verifyToken }         from "./middleware/verifyToken.js";
+app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/products", productRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/stock", stockRoutes);
+app.use("/api/delivery", deliveryRoutes);
+app.use("/api/ceo", ceoRoutes);
+app.use("/api/affiliate", affiliateRoutes);
 
 app.get("/api/events/subscribe", verifyToken, handleSSEConnection);
 
-// ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: "Route not found" });
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+    availableRoutes,
+  });
 });
 
-// ── GLOBAL ERROR HANDLER ──────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error("[Error]", err.message);
   res.status(err.status || 500).json({
@@ -80,7 +97,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ── STARTUP ───────────────────────────────────────────────────────────────────
 async function bootstrap() {
   await connectDB();
   await connectRedis();
