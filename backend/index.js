@@ -15,6 +15,7 @@ import stockRoutes from "./routes/stock.route.js";
 import deliveryRoutes from "./routes/delivery.route.js";
 import ceoRoutes from "./routes/ceo.route.js";
 import affiliateRoutes from "./routes/affiliate.route.js";
+import storeRoutes from "./routes/store.route.js";
 
 import { handleSSEConnection } from "./utils/sseService.js";
 import { verifyToken } from "./middleware/verifyToken.js";
@@ -78,6 +79,7 @@ app.use("/api/stock", stockRoutes);
 app.use("/api/delivery", deliveryRoutes);
 app.use("/api/ceo", ceoRoutes);
 app.use("/api/affiliate", affiliateRoutes);
+app.use("/api/stores", storeRoutes);
 
 app.get("/api/events/subscribe", verifyToken, handleSSEConnection);
 
