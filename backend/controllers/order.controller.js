@@ -6,6 +6,7 @@ import { EscrowLedger, InventoryAudit } from "../models/ledger.model.js";
 import { calculateOrderPricing, generateOrderRef } from "../utils/pricing.js";
 import { createOtpPair }  from "../utils/otpService.js";
 import { notifyUser }     from "../utils/sseService.js";
+import { FulfillmentCoupon } from "../models/fulfillmentCoupon.model.js";
 
 // ── CART ──────────────────────────────────────────────────────────────────────
 export const updateCart = async (req, res) => {
@@ -39,6 +40,54 @@ export const getCart = async (req, res) => {
       .lean();
     const active = items.filter((i) => i.productId?.isActive);
     res.status(200).json({ success: true, items: active });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const applyFulfillmentCoupon = async (req, res) => {
+  try {
+    const { code } = req.body;
+    const userId = req.userId;
+
+    const coupon = await FulfillmentCoupon.findOne({ code: code.toUpperCase() });
+    if (!coupon) return res.status(404).json({ success: false, message: "Invalid coupon code" });
+    if (coupon.status !== "ACTIVE") return res.status(400).json({ success: false, message: "Coupon not active" });
+    if (new Date() > coupon.expiresAt) return res.status(400).json({ success: false, message: "Coupon expired" });
+    if (coupon.remainingSlots <= 0) return res.status(400).json({ success: false, message: "No slots left" });
+
+    const alreadyClaimed = coupon.claimedBy.find((entry) => entry.userId?.toString() === userId);
+    if (alreadyClaimed) {
+      await CartItem.updateMany({ userId }, { fulfillmentCouponCode: coupon.code });
+      return res.status(200).json({ success: true, message: "Coupon re-applied", coupon: { code: coupon.code } });
+    }
+
+    if (coupon.claimedBy.length >= coupon.totalSlots) {
+      return res.status(400).json({ success: false, message: "All slots claimed" });
+    }
+
+    coupon.claimedBy.push({ userId, claimedAt: new Date() });
+    coupon.usedSlots += 1;
+    if (coupon.usedSlots >= coupon.totalSlots) coupon.status = "EXHAUSTED";
+    await coupon.save();
+
+    await CartItem.updateMany({ userId }, { fulfillmentCouponCode: coupon.code });
+
+    res.status(200).json({
+      success: true,
+      message: "Coupon applied. Your cart is now covered by this fulfillment code.",
+      coupon: { code: coupon.code, remainingSlots: coupon.remainingSlots },
+    });
+  } catch (error) {
+    console.error("[applyFulfillmentCoupon]", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const removeFulfillmentCoupon = async (req, res) => {
+  try {
+    await CartItem.updateMany({ userId: req.userId }, { $unset: { fulfillmentCouponCode: 1 } });
+    res.status(200).json({ success: true, message: "Coupon removed from cart" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -113,6 +162,7 @@ export const checkout = async (req, res) => {
       const orderCount = await Order.countDocuments({}, { session });
 
       // 4c. Create order document
+      const couponCode = cartItems?.[0]?.fulfillmentCouponCode || null;
       const [order] = await Order.create([{
         orderRef:        generateOrderRef(orderState, orderCount + 1),
         buyerId:         req.userId,
@@ -126,6 +176,7 @@ export const checkout = async (req, res) => {
         riderOtpHash:    otpHash,   // bcrypt hash only — raw OTP never stored
         shippingAddress,
         assignedState:   orderState,
+        fulfillmentCouponCode: couponCode,
         timeline: [{
           status: "PENDING", timestamp: new Date(),
           actorId: req.userId, note: "Order created. Escrow locked.",
@@ -214,6 +265,92 @@ export const getOrderHistory = async (req, res) => {
 };
 
 // ── CANCEL ORDER ──────────────────────────────────────────────────────────────
+export const bulkFulfillmentPayment = async (req, res) => {
+  try {
+    const { couponCode } = req.body;
+    const userId = req.userId;
+
+    const coupon = await FulfillmentCoupon.findOne({ code: couponCode.toUpperCase() });
+    if (!coupon) return res.status(404).json({ success: false, message: "Coupon not found" });
+
+    const isAuthorized = coupon.affiliateId.toString() === userId || req.userRole === "super_admin";
+    if (!isAuthorized) return res.status(403).json({ success: false, message: "Not authorized to pay for this coupon" });
+
+    const orders = await Order.find({
+      fulfillmentCouponCode: couponCode.toUpperCase(),
+      status: { $in: ["PENDING", "AWAITING_FULFILLMENT_PAYMENT"] },
+    });
+
+    if (!orders.length) {
+      return res.status(400).json({ success: false, message: "No pending orders for this coupon" });
+    }
+
+    const totalKobo = orders.reduce((sum, order) => sum + (order.grossTotalKobo || 0), 0);
+
+    if (coupon.budgetKobo > 0 && coupon.remainingBudgetKobo < totalKobo) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient coupon budget. Need ₦${(totalKobo / 100).toLocaleString()}, have ₦${(coupon.remainingBudgetKobo / 100).toLocaleString()}`,
+      });
+    }
+
+    for (const order of orders) {
+      order.status = "PAID";
+      order.paymentMethod = "FULFILLMENT_COUPON";
+      order.paidAt = new Date();
+      await order.save();
+
+      const claim = coupon.claimedBy.find((entry) => entry.userId?.toString() === order.buyerId.toString());
+      if (claim) claim.orderId = order._id;
+    }
+
+    if (coupon.budgetKobo > 0) {
+      coupon.usedBudgetKobo += totalKobo;
+    }
+    await coupon.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Paid ${orders.length} orders totaling ₦${(totalKobo / 100).toLocaleString()}`,
+      ordersPaid: orders.length,
+      totalKobo,
+    });
+  } catch (error) {
+    console.error("[bulkFulfillmentPayment]", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getOrdersByCoupon = async (req, res) => {
+  try {
+    const { couponCode } = req.params;
+    const coupon = await FulfillmentCoupon.findOne({ code: couponCode.toUpperCase() }).lean();
+    if (!coupon) return res.status(404).json({ success: false, message: "Coupon not found" });
+
+    const isAuthorized = coupon.affiliateId.toString() === req.userId || req.userRole === "super_admin";
+    if (!isAuthorized) return res.status(403).json({ success: false, message: "Unauthorized" });
+
+    const orders = await Order.find({ fulfillmentCouponCode: couponCode.toUpperCase() })
+      .populate("buyerId", "name email phone")
+      .populate("items.productId", "name priceKobo")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const totalPending = orders.filter((order) => order.status === "PENDING" || order.status === "AWAITING_FULFILLMENT_PAYMENT").length;
+    const totalKobo = orders.reduce((sum, order) => sum + (order.grossTotalKobo || 0), 0);
+
+    res.status(200).json({
+      success: true,
+      coupon,
+      orders,
+      summary: { totalOrders: orders.length, totalPending, totalKobo },
+    });
+  } catch (error) {
+    console.error("[getOrdersByCoupon]", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const cancelOrder = async (req, res) => {
   const { reason } = req.body;
   try {

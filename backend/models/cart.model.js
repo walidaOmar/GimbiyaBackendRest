@@ -3,9 +3,10 @@ import mongoose from "mongoose";
 // ─── CART ITEM ────────────────────────────────────────────────────────────────
 const cartItemSchema = new mongoose.Schema(
   {
-    userId:    { type: mongoose.Schema.Types.ObjectId, ref: "User",    required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
-    quantity:  { type: Number, required: true, min: 1 },
+    quantity: { type: Number, required: true, min: 1 },
+    fulfillmentCouponCode: { type: String, default: null },
   },
   { timestamps: true }
 );

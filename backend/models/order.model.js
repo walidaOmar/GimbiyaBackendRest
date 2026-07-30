@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 export const ORDER_STATUSES = [
-  "PENDING", "CONFIRMED", "PROCESSING", "DISPATCHED", "DELIVERED", "CANCELLED", "DISPUTED", "REFUNDED",
+  "PENDING", "CONFIRMED", "PROCESSING", "DISPATCHED", "DELIVERED", "CANCELLED", "DISPUTED", "REFUNDED", "PAID", "AWAITING_FULFILLMENT_PAYMENT",
 ];
 
 export const ESCROW_STATUSES = ["LOCKED", "RELEASED", "REFUNDED", "FROZEN"];
@@ -46,6 +46,9 @@ const orderSchema = new mongoose.Schema(
     shippingAddress:   { type: String, required: true },
     assignedState:     { type: String, enum: ["Abuja", "Kano", "Kaduna"], required: true, index: true },
     monnifyPaymentRef: { type: String, default: null },
+    fulfillmentCouponCode: { type: String, default: null },
+    paymentMethod: { type: String, default: null },
+    paidAt: { type: Date, default: null },
 
     timeline: [timelineSchema],
   },

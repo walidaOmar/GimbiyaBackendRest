@@ -5,6 +5,11 @@ import { Store } from "../models/store.model.js";
 import { Branch } from "../models/branch.model.js";
 import { User } from "../models/user.model.js";
 
+export const VALID_COMMERCE_SEGMENTS = ["manufacturer", "wholesaler", "retailer", "service_provider", "logistics"];
+
+export const isValidCommerceSegment = (value) =>
+  typeof value === "string" && VALID_COMMERCE_SEGMENTS.includes(value);
+
 export const getStores = async (req, res) => {
   try {
     const { status = "VERIFIED", state, page = 1, limit = 20, search } = req.query;
@@ -83,6 +88,7 @@ export const createStoreOnboarding = async (req, res) => {
       homeAddress,
       accountDetails,
       primaryState,
+      commerceSegment,
     } = req.body;
 
     if (
@@ -96,6 +102,10 @@ export const createStoreOnboarding = async (req, res) => {
       !primaryState
     ) {
       return res.status(400).json({ success: false, message: "All required fields must be provided" });
+    }
+
+    if (commerceSegment !== undefined && !isValidCommerceSegment(commerceSegment)) {
+      return res.status(400).json({ success: false, message: "Invalid commerce segment" });
     }
 
     const [existingStore, existingUser] = await Promise.all([
@@ -126,6 +136,7 @@ export const createStoreOnboarding = async (req, res) => {
           accountDetails: accountDetails || {},
           onboardedBy: req.userId,
           primaryState,
+          commerceSegment: commerceSegment || "retailer",
           verificationStatus: "PENDING",
         },
       ],
@@ -252,6 +263,10 @@ export const updateStore = async (req, res) => {
     delete updates.businessOwnerId;
     delete updates.onboardedBy;
     delete updates.verificationStatus;
+
+    if (updates.commerceSegment !== undefined && !isValidCommerceSegment(updates.commerceSegment)) {
+      return res.status(400).json({ success: false, message: "Invalid commerce segment" });
+    }
 
     const store = await Store.findByIdAndUpdate(storeId, updates, { new: true }).lean();
     if (!store) return res.status(404).json({ success: false, message: "Store not found" });
