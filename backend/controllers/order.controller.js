@@ -7,6 +7,7 @@ import { calculateOrderPricing, generateOrderRef } from "../utils/pricing.js";
 import { createOtpPair }  from "../utils/otpService.js";
 import { notifyUser }     from "../utils/sseService.js";
 import { FulfillmentCoupon } from "../models/fulfillmentCoupon.model.js";
+import { AffiliateClick } from "../models/affiliateClick.model.js";
 
 // ── CART ──────────────────────────────────────────────────────────────────────
 export const updateCart = async (req, res) => {
@@ -95,7 +96,7 @@ export const removeFulfillmentCoupon = async (req, res) => {
 
 // ── ESCROW CHECKOUT ───────────────────────────────────────────────────────────
 export const checkout = async (req, res) => {
-  const { cartItems, shippingAddress, buyerPhone, paymentMethod } = req.body;
+  const { cartItems, shippingAddress, buyerPhone, paymentMethod, affiliateReferralCode, fulfillmentCouponCode } = req.body;
 
   try {
     if (!cartItems?.length || !shippingAddress) {
@@ -162,7 +163,7 @@ export const checkout = async (req, res) => {
       const orderCount = await Order.countDocuments({}, { session });
 
       // 4c. Create order document
-      const couponCode = cartItems?.[0]?.fulfillmentCouponCode || null;
+      const couponCode = fulfillmentCouponCode || cartItems?.[0]?.fulfillmentCouponCode || null;
       const [order] = await Order.create([{
         orderRef:        generateOrderRef(orderState, orderCount + 1),
         buyerId:         req.userId,
@@ -177,6 +178,7 @@ export const checkout = async (req, res) => {
         shippingAddress,
         assignedState:   orderState,
         fulfillmentCouponCode: couponCode,
+        affiliateReferralCode: affiliateReferralCode || null,
         timeline: [{
           status: "PENDING", timestamp: new Date(),
           actorId: req.userId, note: "Order created. Escrow locked.",
@@ -202,6 +204,14 @@ export const checkout = async (req, res) => {
         noteText:    `Deducted by order ${order.orderRef}`, orderId: order._id,
       }));
       await InventoryAudit.create(audits, { session });
+
+      if (affiliateReferralCode) {
+        await AffiliateClick.findOneAndUpdate(
+          { referralCode: affiliateReferralCode, converted: false },
+          { converted: true, orderId: order._id, convertedAt: new Date() },
+          { new: true }
+        );
+      }
 
       await session.commitTransaction();
 

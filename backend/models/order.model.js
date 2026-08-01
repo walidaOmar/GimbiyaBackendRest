@@ -47,6 +47,7 @@ const orderSchema = new mongoose.Schema(
     assignedState:     { type: String, enum: ["Abuja", "Kano", "Kaduna"], required: true, index: true },
     monnifyPaymentRef: { type: String, default: null },
     fulfillmentCouponCode: { type: String, default: null },
+    affiliateReferralCode: { type: String, default: null },
     paymentMethod: { type: String, default: null },
     paidAt: { type: Date, default: null },
 

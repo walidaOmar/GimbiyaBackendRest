@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { Store } from "../models/store.model.js";
 import { Branch } from "../models/branch.model.js";
 import { User } from "../models/user.model.js";
+import { StoreOnboardingRequest } from "../models/storeOnboardingRequest.model.js";
 
 export const VALID_COMMERCE_SEGMENTS = ["manufacturer", "wholesaler", "retailer", "service_provider", "logistics"];
 
@@ -28,7 +29,8 @@ export const getStores = async (req, res) => {
     const [stores, total] = await Promise.all([
       Store.find(filter)
         .populate("businessOwnerId", "name email phone role isActive")
-        .populate("onboardedBy", "name email")
+        .populate("submittedBy", "name email assignedState")
+        .populate("reviewedBy", "name email")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit, 10))
@@ -54,7 +56,8 @@ export const getStoreById = async (req, res) => {
     const [store, branches] = await Promise.all([
       Store.findById(id)
         .populate("businessOwnerId", "name email phone role assignedState isActive")
-        .populate("onboardedBy", "name email role")
+        .populate("submittedBy", "name email role")
+        .populate("reviewedBy", "name email role")
         .lean(),
       Branch.find({ storeId: id })
         .populate("managerId", "name email phone")
@@ -72,123 +75,205 @@ export const getStoreById = async (req, res) => {
   }
 };
 
-export const createStoreOnboarding = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
+export const submitStoreRequest = async (req, res) => {
   try {
     const {
       businessName,
       businessEmail,
       businessPhone,
+      commerceSegment,
+      primaryState,
       nin,
       cacNumber,
       tinNumber,
       businessAddress,
       homeAddress,
       accountDetails,
-      primaryState,
-      commerceSegment,
+      staffSlots,
     } = req.body;
 
-    if (
-      !businessName ||
-      !businessEmail ||
-      !nin ||
-      !cacNumber ||
-      !tinNumber ||
-      !businessAddress ||
-      !homeAddress ||
-      !primaryState
-    ) {
+    if (!businessName || !businessEmail || !commerceSegment || !primaryState || !nin || !cacNumber || !tinNumber) {
       return res.status(400).json({ success: false, message: "All required fields must be provided" });
     }
 
-    if (commerceSegment !== undefined && !isValidCommerceSegment(commerceSegment)) {
-      return res.status(400).json({ success: false, message: "Invalid commerce segment" });
+    if (req.userRole === "developer_coordinator" && primaryState !== req.userState) {
+      return res.status(403).json({ success: false, message: `You can only onboard stores in ${req.userState}` });
     }
 
-    const [existingStore, existingUser] = await Promise.all([
-      Store.findOne({ businessEmail: businessEmail.toLowerCase() }),
-      User.findOne({ email: businessEmail.toLowerCase() }),
-    ]);
-
-    if (existingStore) {
-      await session.abortTransaction();
-      return res.status(400).json({ success: false, message: "A store with this business email already exists" });
-    }
-    if (existingUser) {
-      await session.abortTransaction();
-      return res.status(400).json({ success: false, message: "A user with this email already exists" });
+    if (!staffSlots || !staffSlots.length) {
+      return res.status(400).json({ success: false, message: "At least one staff member is required" });
     }
 
-    const [store] = await Store.create(
-      [
-        {
-          businessName,
-          businessEmail: businessEmail.toLowerCase(),
-          businessPhone: businessPhone || "",
-          nin,
-          cacNumber,
-          tinNumber,
-          businessAddress,
-          homeAddress,
-          accountDetails: accountDetails || {},
-          onboardedBy: req.userId,
-          primaryState,
-          commerceSegment: commerceSegment || "retailer",
-          verificationStatus: "PENDING",
-        },
-      ],
-      { session }
-    );
+    if (commerceSegment === "logistics") {
+      const hasInvalid = staffSlots.some((slot) => slot.role !== "delivery");
+      if (hasInvalid) {
+        return res.status(400).json({ success: false, message: "Logistics stores can only have Dispatch Riders" });
+      }
+    } else {
+      const hasManager = staffSlots.some((slot) => slot.role === "manager");
+      const hasStockManager = staffSlots.some((slot) => slot.role === "stock_manager");
+      if (!hasManager || !hasStockManager) {
+        return res.status(400).json({ success: false, message: "Non-logistics stores require a Branch Manager and Stock Manager" });
+      }
+    }
 
-    await session.commitTransaction();
+    const duplicate = await StoreOnboardingRequest.findOne({
+      businessEmail: businessEmail.toLowerCase(),
+      status: "PENDING",
+    });
+    if (duplicate) {
+      return res.status(400).json({ success: false, message: "A pending request already exists for this business email" });
+    }
+
+    const request = await StoreOnboardingRequest.create({
+      businessName,
+      businessEmail: businessEmail.toLowerCase(),
+      businessPhone: businessPhone || "",
+      commerceSegment,
+      primaryState,
+      nin,
+      cacNumber,
+      tinNumber,
+      businessAddress,
+      homeAddress,
+      accountDetails: accountDetails || {},
+      staffSlots,
+      submittedBy: req.userId,
+      coordinatorState: req.userState || primaryState,
+    });
 
     res.status(201).json({
       success: true,
-      message: "Store onboarding submitted. It will appear in Pending for verification.",
-      storeId: store._id,
+      message: "Store onboarding request submitted to CEO for approval",
+      requestId: request._id,
     });
   } catch (error) {
-    await session.abortTransaction();
-    console.error("[createStoreOnboarding]", error);
+    console.error("[submitStoreRequest]", error);
     res.status(500).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
   }
 };
 
-export const verifyStore = async (req, res) => {
+export const getPendingStoreRequests = async (req, res) => {
+  try {
+    const { state, page = 1, limit = 20 } = req.query;
+    const filter = { status: "PENDING" };
+    if (state) filter.coordinatorState = state;
+
+    const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+    const [requests, total] = await Promise.all([
+      StoreOnboardingRequest.find(filter)
+        .populate("submittedBy", "name email assignedState")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit, 10))
+        .lean(),
+      StoreOnboardingRequest.countDocuments(filter),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      requests,
+      pagination: { page: parseInt(page, 10), limit: parseInt(limit, 10), total },
+    });
+  } catch (error) {
+    console.error("[getPendingStoreRequests]", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getStoreRequestById = async (req, res) => {
+  try {
+    const request = await StoreOnboardingRequest.findById(req.params.id)
+      .populate("submittedBy", "name email phone assignedState")
+      .lean();
+
+    if (!request) return res.status(404).json({ success: false, message: "Request not found" });
+
+    res.status(200).json({ success: true, request });
+  } catch (error) {
+    console.error("[getStoreRequestById]", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const approveStoreRequest = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const { storeId } = req.params;
-    const { initialPassword, verificationNote } = req.body;
+    const { requestId } = req.params;
+    const { initialPassword } = req.body;
 
-    const store = await Store.findById(storeId).session(session);
-    if (!store) {
+    const request = await StoreOnboardingRequest.findById(requestId).session(session);
+    if (!request) {
       await session.abortTransaction();
-      return res.status(404).json({ success: false, message: "Store not found" });
+      return res.status(404).json({ success: false, message: "Request not found" });
     }
-    if (store.verificationStatus !== "PENDING") {
+    if (request.status !== "PENDING") {
       await session.abortTransaction();
-      return res.status(400).json({ success: false, message: "Store is already processed" });
+      return res.status(400).json({ success: false, message: "Request already processed" });
     }
 
-    const plainPassword = initialPassword || crypto.randomBytes(6).toString("hex");
+    const plainPassword = initialPassword || crypto.randomBytes(4).toString("hex");
     const hashedPassword = await bcryptjs.hash(plainPassword, 10);
 
-    const [owner] = await User.create(
-      [
+    const [owner] = await User.create([
+      {
+        email: request.businessEmail,
+        password: hashedPassword,
+        name: request.businessName,
+        phone: request.businessPhone,
+        role: "business_owner",
+        assignedState: request.primaryState,
+        isVerified: true,
+        isActive: true,
+        kycStatus: "APPROVED",
+        onboardedBy: req.userId,
+        onboardingSource: "manual",
+        verificationToken: null,
+        verificationTokenExpiresAt: null,
+      },
+    ], { session });
+
+    const [store] = await Store.create([
+      {
+        businessName: request.businessName,
+        businessEmail: request.businessEmail,
+        businessPhone: request.businessPhone,
+        commerceSegment: request.commerceSegment,
+        primaryState: request.primaryState,
+        nin: request.nin,
+        cacNumber: request.cacNumber,
+        tinNumber: request.tinNumber,
+        businessAddress: request.businessAddress,
+        homeAddress: request.homeAddress,
+        accountDetails: request.accountDetails,
+        businessOwnerId: owner._id,
+        onboardedBy: req.userId,
+        verificationStatus: "VERIFIED",
+        submittedBy: request.submittedBy,
+        submitterRole: "developer_coordinator",
+        reviewedBy: req.userId,
+        reviewNote: "Approved by CEO via onboarding request",
+        reviewedAt: new Date(),
+      },
+    ], { session });
+
+    const createdStaff = [];
+    const branchMap = {};
+
+    for (const slot of request.staffSlots) {
+      const staffPassword = crypto.randomBytes(4).toString("hex");
+      const staffHash = await bcryptjs.hash(staffPassword, 10);
+
+      const [staffUser] = await User.create([
         {
-          email: store.businessEmail,
-          password: hashedPassword,
-          name: store.businessName,
-          phone: store.businessPhone,
-          role: "business_owner",
-          assignedState: store.primaryState,
+          email: slot.email.toLowerCase(),
+          password: staffHash,
+          name: slot.fullName,
+          phone: slot.phone,
+          role: slot.role,
+          assignedState: slot.assignedState,
           isVerified: true,
           isActive: true,
           kycStatus: "APPROVED",
@@ -197,60 +282,102 @@ export const verifyStore = async (req, res) => {
           verificationToken: null,
           verificationTokenExpiresAt: null,
         },
-      ],
-      { session }
-    );
+      ], { session });
 
-    store.businessOwnerId = owner._id;
-    store.verificationStatus = "VERIFIED";
-    store.verificationNote = verificationNote || "Verified by CEO";
-    await store.save({ session });
+      createdStaff.push({
+        _id: staffUser._id,
+        name: staffUser.name,
+        email: staffUser.email,
+        role: staffUser.role,
+        tempPassword: staffPassword,
+      });
+
+      const branchKey = `${slot.assignedState}-${slot.buildingFloor}`;
+      if (!branchMap[branchKey]) {
+        branchMap[branchKey] = {
+          storeId: store._id,
+          branchName: `${request.businessName} — ${slot.assignedState} ${slot.buildingFloor}`,
+          assignedState: slot.assignedState,
+          buildingFloor: slot.buildingFloor,
+          managerId: null,
+          stockManagerId: null,
+          riders: [],
+        };
+      }
+
+      if (slot.role === "manager") branchMap[branchKey].managerId = staffUser._id;
+      if (slot.role === "stock_manager") branchMap[branchKey].stockManagerId = staffUser._id;
+      if (slot.role === "delivery") branchMap[branchKey].riders.push(staffUser._id);
+    }
+
+    const createdBranches = [];
+    for (const key of Object.keys(branchMap)) {
+      const branchData = branchMap[key];
+      const [branch] = await Branch.create([
+        {
+          storeId: branchData.storeId,
+          branchName: branchData.branchName,
+          assignedState: branchData.assignedState,
+          buildingFloor: branchData.buildingFloor,
+          managerId: branchData.managerId,
+          stockManagerId: branchData.stockManagerId,
+          isActive: true,
+        },
+      ], { session });
+
+      createdBranches.push({
+        _id: branch._id,
+        name: branch.branchName,
+        manager: branchData.managerId,
+        stockManager: branchData.stockManagerId,
+        riders: branchData.riders,
+      });
+    }
+
+    request.status = "APPROVED";
+    request.reviewedBy = req.userId;
+    request.reviewedAt = new Date();
+    request.createdStoreId = store._id;
+    await request.save({ session });
 
     await session.commitTransaction();
 
     res.status(200).json({
       success: true,
-      message: "Store verified and business owner account created",
-      store: {
-        _id: store._id,
-        businessName: store.businessName,
-        businessEmail: store.businessEmail,
-        verificationStatus: store.verificationStatus,
-      },
-      owner: {
-        _id: owner._id,
-        email: owner.email,
-        tempPassword: plainPassword,
-      },
+      message: "Store approved. Business owner, staff, and branches created.",
+      store: { _id: store._id, businessName: store.businessName, commerceSegment: store.commerceSegment },
+      owner: { _id: owner._id, email: owner.email, tempPassword: plainPassword },
+      staff: createdStaff,
+      branches: createdBranches,
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("[verifyStore]", error);
+    console.error("[approveStoreRequest]", error);
     res.status(500).json({ success: false, message: error.message });
   } finally {
     session.endSession();
   }
 };
 
-export const rejectStore = async (req, res) => {
+export const rejectStoreRequest = async (req, res) => {
   try {
-    const { storeId } = req.params;
+    const { requestId } = req.params;
     const { reason } = req.body;
-    if (!reason) return res.status(400).json({ success: false, message: "Rejection reason is required" });
+    if (!reason) return res.status(400).json({ success: false, message: "Rejection reason required" });
 
-    const store = await Store.findById(storeId);
-    if (!store) return res.status(404).json({ success: false, message: "Store not found" });
-    if (store.verificationStatus !== "PENDING") {
-      return res.status(400).json({ success: false, message: "Store is already processed" });
-    }
+    const request = await StoreOnboardingRequest.findById(requestId);
+    if (!request) return res.status(404).json({ success: false, message: "Request not found" });
+    if (request.status !== "PENDING") return res.status(400).json({ success: false, message: "Already processed" });
 
-    store.verificationStatus = "SUSPENDED";
-    store.verificationNote = reason;
-    await store.save();
+    request.status = "REJECTED";
+    request.reviewedBy = req.userId;
+    request.reviewNote = reason;
+    request.reviewedAt = new Date();
+    await request.save();
 
-    res.status(200).json({ success: true, message: "Store onboarding rejected", reason });
+    res.status(200).json({ success: true, message: "Store request rejected" });
   } catch (error) {
-    console.error("[rejectStore]", error);
+    console.error("[rejectStoreRequest]", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -263,6 +390,7 @@ export const updateStore = async (req, res) => {
     delete updates.businessOwnerId;
     delete updates.onboardedBy;
     delete updates.verificationStatus;
+    delete updates.submittedBy;
 
     if (updates.commerceSegment !== undefined && !isValidCommerceSegment(updates.commerceSegment)) {
       return res.status(400).json({ success: false, message: "Invalid commerce segment" });
@@ -365,8 +493,8 @@ export const updateBranch = async (req, res) => {
 export const getAvailableStaff = async (req, res) => {
   try {
     const { role, state } = req.query;
-    if (!role || !["manager", "stock_manager"].includes(role)) {
-      return res.status(400).json({ success: false, message: "role must be manager or stock_manager" });
+    if (!role || !["manager", "stock_manager", "delivery"].includes(role)) {
+      return res.status(400).json({ success: false, message: "role must be manager, stock_manager, or delivery" });
     }
 
     const filter = { role, isActive: true };
@@ -380,34 +508,6 @@ export const getAvailableStaff = async (req, res) => {
     res.status(200).json({ success: true, staff });
   } catch (error) {
     console.error("[getAvailableStaff]", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-export const getPendingStores = async (req, res) => {
-  try {
-    const { page = 1, limit = 20, state } = req.query;
-    const filter = { verificationStatus: "PENDING" };
-    if (state) filter.primaryState = state;
-
-    const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-    const [stores, total] = await Promise.all([
-      Store.find(filter)
-        .populate("onboardedBy", "name email")
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit, 10))
-        .lean(),
-      Store.countDocuments(filter),
-    ]);
-
-    res.status(200).json({
-      success: true,
-      stores,
-      pagination: { page: parseInt(page, 10), limit: parseInt(limit, 10), total },
-    });
-  } catch (error) {
-    console.error("[getPendingStores]", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
