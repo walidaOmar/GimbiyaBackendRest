@@ -34,7 +34,7 @@ export const signup = async (req, res) => {
       name,
       phone:                        phone || "",
       role:                         role || "buyer",
-      assignedState:                assignedState || "Abuja",
+      assignedState:                assignedState || "Ado bayero mall",
       verificationToken,
       verificationTokenExpiresAt:   Date.now() + 24 * 60 * 60 * 1000, // 24 hours
     });

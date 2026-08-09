@@ -14,7 +14,7 @@ export const USER_ROLES = [
   "support",              // Customer support
 ];
 
-export const NIGERIAN_STATES = ["Abuja", "Kano", "Kaduna", "Global"];
+export const NIGERIAN_STATES = ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market", "Global"];
 export const KYC_STATUSES    = ["PENDING", "APPROVED", "REJECTED"];
 
 const userSchema = new mongoose.Schema(
@@ -45,7 +45,7 @@ const userSchema = new mongoose.Schema(
       type: String, enum: USER_ROLES, default: "buyer", index: true,
     },
     assignedState: {
-      type: String, enum: NIGERIAN_STATES, default: "Abuja", index: true,
+      type: String, enum: NIGERIAN_STATES, default: "Ado bayero mall", index: true,
     },
     phone: {
       type: String, default: "",

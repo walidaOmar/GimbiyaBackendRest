@@ -3,7 +3,7 @@ import { Product }        from "../models/product.model.js";
 import { Order }          from "../models/order.model.js";
 import { CartItem }       from "../models/cart.model.js";
 import { EscrowLedger, InventoryAudit } from "../models/ledger.model.js";
-import { calculateOrderPricing, generateOrderRef } from "../utils/pricing.js";
+import { calculateOrderPricing, generateOrderRef, getPlatformCommission } from "../utils/pricing.js";
 import { createOtpPair }  from "../utils/otpService.js";
 import { notifyUser }     from "../utils/sseService.js";
 import { FulfillmentCoupon } from "../models/fulfillmentCoupon.model.js";
@@ -135,8 +135,10 @@ export const checkout = async (req, res) => {
     });
 
     // Step 2: Calculate pricing — SINGLE SOURCE OF TRUTH
+    const commissionPct = getPlatformCommission(orderState, products[0].buildingFloor);
     const pricing = calculateOrderPricing(
-      pricedItems.map((i) => ({ unitPriceKobo: i.unitPriceKobo, quantity: i.quantity }))
+      pricedItems.map((i) => ({ unitPriceKobo: i.unitPriceKobo, quantity: i.quantity })),
+      commissionPct
     );
 
     // Step 3: Generate OTP pair — rawOtp shown to buyer only

@@ -39,7 +39,7 @@ const groupOrderSchema = new mongoose.Schema(
     ],
     participants: [participantSchema],
     status: { type: String, enum: GROUP_ORDER_STATUSES, default: "OPEN", index: true },
-    assignedState: { type: String, enum: ["Abuja", "Kano", "Kaduna"], required: true },
+    assignedState: { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true },
     expiresAt: { type: Date, required: true },
     fulfilledAt: { type: Date, default: null },
     masterOrderRef: { type: String, default: null },

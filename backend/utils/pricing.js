@@ -12,7 +12,29 @@
  *   3. Net    = Gross - Fee                  → merchant payout
  */
 
-// Platform service fee — 1.5% of gross order total
+export const REGIONS = [
+  { id: "Ado bayero mall", label: "Ado Bayero Mall", shortCode: "ABJ", commissionPct: 5.5 },
+  { id: "Tafawa balewa refinery", label: "Tafawa Balewa Refinery", shortCode: "KN", commissionPct: 5.0 },
+  { id: "Sardauna market", label: "Sardauna Market", shortCode: "KD", commissionPct: 4.5 },
+];
+
+export function getPlatformCommission(state, floor) {
+  if (floor === "LEVEL_2" || floor === 2) return 3.0;
+  const region = REGIONS.find((r) => r.id === state);
+  return region ? region.commissionPct : 5.0;
+}
+
+export function getRegionLabel(stateId) {
+  const region = REGIONS.find((r) => r.id === stateId);
+  return region ? region.label : stateId;
+}
+
+export function getRegionShortCode(stateId) {
+  const region = REGIONS.find((r) => r.id === stateId);
+  return region ? region.shortCode : stateId;
+}
+
+// Retained for callers that use the legacy flat-rate pricing helper.
 export const PLATFORM_FEE_RATE = 0.015;
 
 // Minimum order value requiring escrow (Kobo). Default: ₦500 = 50,000 Kobo
@@ -21,9 +43,10 @@ export const ESCROW_MIN_KOBO = parseInt(process.env.ESCROW_MIN_AMOUNT_KOBO || "5
 /**
  * calculateOrderPricing
  * @param {Array<{ unitPriceKobo: number, quantity: number }>} items
+ * @param {number} commissionPct Platform commission percentage
  * @returns {{ grossTotalKobo, platformFeeKobo, merchantNetKobo, grossTotalNaira, platformFeeNaira, merchantNetNaira }}
  */
-export function calculateOrderPricing(items) {
+export function calculateOrderPricing(items, commissionPct = PLATFORM_FEE_RATE * 100) {
   // Validate all inputs are positive integers
   for (const item of items) {
     if (!Number.isInteger(item.unitPriceKobo) || item.unitPriceKobo < 0)
@@ -37,8 +60,8 @@ export function calculateOrderPricing(items) {
     (sum, item) => sum + item.unitPriceKobo * item.quantity, 0
   );
 
-  // Step 2: Platform Fee — 1.5%, rounded to nearest Kobo
-  const platformFeeKobo = Math.round(grossTotalKobo * PLATFORM_FEE_RATE);
+  // Step 2: Platform Fee, rounded to nearest Kobo
+  const platformFeeKobo = Math.round(grossTotalKobo * (commissionPct / 100));
 
   // Step 3: Merchant Net — exact integer subtraction
   const merchantNetKobo = grossTotalKobo - platformFeeKobo;
@@ -58,7 +81,7 @@ export function calculateOrderPricing(items) {
  * generateOrderRef — human-readable order reference e.g. GM-KN-240001
  */
 export function generateOrderRef(state, sequenceNum) {
-  const code = state.slice(0, 2).toUpperCase();
+  const code = getRegionShortCode(state);
   const now  = new Date();
   const yy   = String(now.getFullYear()).slice(2);
   const mm   = String(now.getMonth() + 1).padStart(2, "0");

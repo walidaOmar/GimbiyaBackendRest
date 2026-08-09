@@ -26,7 +26,7 @@ export const VERIFICATION_EMAIL_TEMPLATE = `
     <p style="color: #9B9BB8;">This code will expire in <strong style="color: #C8A84B;">24 hours</strong>.</p>
     <p style="color: #9B9BB8;">If you did not create a Gimbiya Mall account, please ignore this email.</p>
     <hr style="border: none; border-top: 1px solid #1E1E3F; margin: 20px 0;">
-    <p style="color: #3A3A5A; font-size: 12px; text-align: center;">Gimbiya Mall · Abuja · Kano · Kaduna</p>
+    <p style="color: #3A3A5A; font-size: 12px; text-align: center;">Gimbiya Mall · Ado Bayero Mall · Tafawa Balewa Refinery · Sardauna Market</p>
   </div>
 </body>
 </html>
@@ -51,7 +51,7 @@ export const WELCOME_EMAIL_TEMPLATE = `
     </div>
     <p style="color: #9B9BB8;">You can now:</p>
     <ul style="color: #9B9BB8;">
-      <li>Browse products across Abuja, Kano, and Kaduna</li>
+      <li>Browse products across Ado Bayero Mall, Tafawa Balewa Refinery, and Sardauna Market</li>
       <li>Place secure escrow-protected orders</li>
       <li>Track your deliveries in real time</li>
     </ul>

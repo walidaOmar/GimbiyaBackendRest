@@ -4,6 +4,7 @@ import { Order }        from "../models/order.model.js";
 import { Product }      from "../models/product.model.js";
 import { EscrowLedger } from "../models/ledger.model.js";
 import { notifyUser }   from "../utils/sseService.js";
+import { REGIONS, getRegionLabel } from "../utils/pricing.js";
 import {
   sendKycApprovedEmail,
   sendKycRejectedEmail,
@@ -23,7 +24,7 @@ export const getSystemMetrics = async (req, res) => {
     res.status(200).json({
       success: true,
       platform: { totalUsers, totalProducts, activeOrders },
-      nodes: { Abuja: "ONLINE", Kano: "OPTIMIZED", Kaduna: "SECURE" },
+      nodes: Object.fromEntries(REGIONS.map((region, index) => [region.id, ["ONLINE", "OPTIMIZED", "SECURE"][index]])),
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -67,10 +68,11 @@ export const getNationalTelemetry = async (req, res) => {
 
     // Build per-state breakdown
     const stateBreakdown = {};
-    for (const state of ["Abuja", "Kano", "Kaduna"]) {
+    for (const state of REGIONS.map((region) => region.id)) {
       const orders    = orderStats.find((s) => s._id === state) || {};
       const merchants = merchantCounts.find((m) => m._id === state) || {};
       stateBreakdown[state] = {
+        label:            getRegionLabel(state),
         totalOrders:     orders.totalOrders     || 0,
         grossTotalKobo:  orders.grossTotalKobo  || 0,
         grossTotalNaira: (orders.grossTotalKobo || 0) / 100,

@@ -35,7 +35,7 @@ const storeSchema = new mongoose.Schema(
     },
     verificationNote: { type: String, default: "" },
 
-    primaryState:     { type: String, enum: ["Abuja", "Kano", "Kaduna"], required: true },
+    primaryState:     { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true },
     commerceSegment: {
       type: String,
       enum: ["manufacturer", "wholesaler", "retailer", "service_provider", "logistics"],

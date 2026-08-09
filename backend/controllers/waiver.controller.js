@@ -118,6 +118,7 @@ export const submitWaiverRequest = async (req, res) => {
       coordinatorId,
       targetUserIds,
       requestedSlots: Number(requestedSlots),
+      proposedState: affiliate.assignedState,
       reason: reason || "",
     });
 

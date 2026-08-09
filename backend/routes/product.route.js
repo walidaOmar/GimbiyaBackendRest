@@ -13,7 +13,7 @@ import { verifyToken, requireRole, requireVerified } from "../middleware/verifyT
 const router = express.Router();
 
 // ── PUBLIC ────────────────────────────────────────────────────────────────────
-// GET /api/products?assignedState=Kano&buildingFloor=LEVEL_1&page=1&limit=20
+// GET /api/products?assignedState=Tafawa%20balewa%20refinery&buildingFloor=LEVEL_1&page=1&limit=20
 router.get("/",     getCatalog);
 router.get("/:id",  getProduct);
 

@@ -10,7 +10,7 @@ export const getCatalog = async (req, res) => {
       page = 1, limit = 20,
     } = req.query;
 
-    const VALID_STATES = ["Abuja", "Kano", "Kaduna"];
+    const VALID_STATES = ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"];
     if (!assignedState || !VALID_STATES.includes(assignedState)) {
       return res.status(400).json({
         success: false,

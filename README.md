@@ -52,7 +52,7 @@ npm run dev
 ### Products (`/api/products`)
 | Method | Route | Auth | Notes |
 |--------|-------|------|-------|
-| GET | `/` | Public | `?assignedState=Kano&buildingFloor=LEVEL_1&page=1&limit=20` |
+| GET | `/` | Public | `?assignedState=Tafawa%20balewa%20refinery&buildingFloor=LEVEL_1&page=1&limit=20` |
 | GET | `/:id` | Public | Single product |
 | POST | `/` | Merchant+ | Publish listing. `priceKobo` must be integer |
 | GET | `/merchant/my-listings` | Merchant+ | Own listings |

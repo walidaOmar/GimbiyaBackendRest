@@ -7,7 +7,7 @@ const staffSlotSchema = new mongoose.Schema({
   fullName: { type: String, required: true },
   email: { type: String, required: true, lowercase: true },
   phone: { type: String, default: "" },
-  assignedState: { type: String, enum: ["Abuja", "Kano", "Kaduna"], required: true },
+  assignedState: { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true },
   buildingFloor: { type: String, enum: ["LEVEL_1", "LEVEL_2"], required: true },
 }, { _id: true });
 
@@ -17,7 +17,7 @@ const storeOnboardingRequestSchema = new mongoose.Schema(
     businessEmail: { type: String, required: true, lowercase: true, trim: true },
     businessPhone: { type: String, default: "" },
     commerceSegment: { type: String, enum: ["manufacturer", "wholesaler", "retailer", "service_provider", "logistics"], required: true },
-    primaryState: { type: String, enum: ["Abuja", "Kano", "Kaduna"], required: true },
+    primaryState: { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true },
 
     nin: { type: String, required: true },
     cacNumber: { type: String, required: true },
@@ -33,7 +33,7 @@ const storeOnboardingRequestSchema = new mongoose.Schema(
     staffSlots: [staffSlotSchema],
 
     submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    coordinatorState: { type: String, required: true },
+    coordinatorState: { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true },
 
     status: { type: String, enum: REQUEST_STATUSES, default: "PENDING", index: true },
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },

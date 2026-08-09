@@ -44,7 +44,7 @@ const orderSchema = new mongoose.Schema(
     signatureStoragePath: { type: String, default: null },
 
     shippingAddress:   { type: String, required: true },
-    assignedState:     { type: String, enum: ["Abuja", "Kano", "Kaduna"], required: true, index: true },
+    assignedState:     { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true, index: true },
     monnifyPaymentRef: { type: String, default: null },
     fulfillmentCouponCode: { type: String, default: null },
     affiliateReferralCode: { type: String, default: null },

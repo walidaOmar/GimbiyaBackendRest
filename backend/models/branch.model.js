@@ -5,7 +5,7 @@ const branchSchema = new mongoose.Schema(
     storeId:        { type: mongoose.Schema.Types.ObjectId, ref: "Store", required: true, index: true },
     branchName:     { type: String, required: true, trim: true },
 
-    assignedState:  { type: String, enum: ["Abuja", "Kano", "Kaduna"], required: true },
+    assignedState:  { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true },
     buildingFloor:  { type: String, enum: ["LEVEL_1", "LEVEL_2"], required: true },
 
     managerId:      { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },

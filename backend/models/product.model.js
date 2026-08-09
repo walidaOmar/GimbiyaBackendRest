@@ -19,7 +19,7 @@ const productSchema = new mongoose.Schema(
 
     categorySlug:  { type: String, required: true, index: true },
     merchantId:    { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
-    assignedState: { type: String, enum: ["Abuja", "Kano", "Kaduna"], required: true, index: true },
+    assignedState: { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true, index: true },
     buildingFloor: { type: String, enum: ["LEVEL_1", "LEVEL_2"], required: true },
     imageUrls:     { type: [String], default: [] },
     isActive:      { type: Boolean, default: true, index: true },
