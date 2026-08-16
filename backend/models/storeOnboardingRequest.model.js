@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 export const REQUEST_STATUSES = ["PENDING", "APPROVED", "REJECTED"];
 
 const staffSlotSchema = new mongoose.Schema({
-  role: { type: String, enum: ["manager", "stock_manager", "delivery"], required: true },
+  role: { type: String, enum: ["manager", "stock_manager", "delivery", "deal_initiator"], required: true },
   fullName: { type: String, required: true },
   email: { type: String, required: true, lowercase: true },
   phone: { type: String, default: "" },

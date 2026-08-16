@@ -5,6 +5,8 @@ export const USER_ROLES = [
   "super_admin",          // Global CEO
   "developer_coordinator",// State Coordinator
   "business_owner",       // Merchant Tenant
+  "property_admin",       // Property portfolio admin
+  "deal_initiator",       // Property buyer engagement agent
   "manager",              // Branch Manager
   "stock_manager",        // Warehouse Stock Manager
   "delivery",             // Logistics Rider

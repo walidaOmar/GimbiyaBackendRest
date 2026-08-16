@@ -223,7 +223,7 @@ export const approveStoreRequest = async (req, res) => {
         password: hashedPassword,
         name: request.businessName,
         phone: request.businessPhone,
-        role: "business_owner",
+        role: request.serviceCategory === "property_management" ? "property_admin" : "business_owner",
         assignedState: request.primaryState,
         isVerified: true,
         isActive: true,
@@ -283,6 +283,18 @@ export const approveStoreRequest = async (req, res) => {
           verificationTokenExpiresAt: null,
         },
       ], { session });
+
+      // Skip branch mapping for deal initiators
+      if (slot.role === "deal_initiator") {
+        createdStaff.push({
+          _id: staffUser._id,
+          name: staffUser.name,
+          email: staffUser.email,
+          role: staffUser.role,
+          tempPassword: staffPassword,
+        });
+        continue;
+      }
 
       createdStaff.push({
         _id: staffUser._id,
