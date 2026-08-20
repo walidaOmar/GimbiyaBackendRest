@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "dev": "NODE_ENV=development nodemon backend/index.js",
-    "start": "NODE_ENV=production node backend/index.js"
+    "start": "NODE_ENV=production node backend/index.js",
+    "seed": "node backend/seeds/seedMarketplace.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

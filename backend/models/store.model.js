@@ -42,6 +42,7 @@ const storeSchema = new mongoose.Schema(
       default: "retailer",
       index: true,
     },
+    serviceCategory: { type: String, default: null },
 
     submittedBy: {
       type: mongoose.Schema.Types.ObjectId,

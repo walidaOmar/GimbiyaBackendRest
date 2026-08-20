@@ -10,7 +10,6 @@ const router = express.Router();
 
 // PUBLIC
 router.get("/", getProperties);
-router.get("/:id", getPropertyById);
 
 // PROPERTY ADMIN
 router.post("/", verifyToken, requireRole("property_admin", "super_admin"), createProperty);
@@ -26,5 +25,7 @@ router.get("/deal-initiator/dashboard", verifyToken, requireRole("deal_initiator
 router.post("/:id/inquire", verifyToken, requireRole("buyer"), createInquiry);
 router.patch("/inquiries/:id/assign", verifyToken, requireRole("property_admin"), assignInquiry);
 router.patch("/inquiries/:id/status", verifyToken, requireRole("deal_initiator", "property_admin"), updateInquiryStatus);
+
+router.get("/:id", getPropertyById);
 
 export default router;
