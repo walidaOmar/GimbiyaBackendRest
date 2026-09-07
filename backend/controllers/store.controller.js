@@ -6,6 +6,8 @@ import { Branch } from "../models/branch.model.js";
 import { User } from "../models/user.model.js";
 import { StoreOnboardingRequest } from "../models/storeOnboardingRequest.model.js";
 import { marketTierForBusinessType, validateClassification } from "../config/businessClassification.js";
+import { Business } from "../models/business.model.js";
+import { googleSheetsService } from "../services/googleSheetsRuntime.js";
 
 export const VALID_COMMERCE_SEGMENTS = ["manufacturer", "wholesaler", "retailer", "service_provider", "logistics"];
 
@@ -293,6 +295,21 @@ export const approveStoreRequest = async (req, res) => {
         reviewedAt: new Date(),
       },
     ], { session });
+
+    await Business.create([{
+      name: request.businessName,
+      email: request.businessEmail,
+      ownerId: owner._id,
+      assignedState: request.primaryState,
+      segment: request.commerceSegment,
+      isApproved: true,
+    }], { session });
+
+    await googleSheetsService.appendRow(
+      process.env.GOOGLE_SPREADSHEET_ID_ONBOARDING,
+      "MasterOnboarding!A:J",
+      [new Date().toISOString(), owner._id.toString(), owner.email, owner.name, store.businessName, store.primaryState, store.commerceSegment, owner.phone, req.userId, owner.kycStatus],
+    );
 
     const createdStaff = [];
     const branchMap = {};

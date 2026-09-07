@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 // All 7 platform roles
 export const USER_ROLES = [
   "super_admin",          // Global CEO
+  "ceo",
   "developer_coordinator",// State Coordinator
   "business_owner",       // Merchant Tenant
   "property_admin",       // Property portfolio admin

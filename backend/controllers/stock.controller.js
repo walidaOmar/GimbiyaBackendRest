@@ -1,6 +1,8 @@
+import mongoose from "mongoose";
 import { Product }       from "../models/product.model.js";
 import { InventoryAudit } from "../models/ledger.model.js";
 import { notifyUser }     from "../utils/sseService.js";
+import { googleSheetsService } from "../services/googleSheetsRuntime.js";
 
 const LOW_STOCK_THRESHOLD = parseInt(process.env.LOW_STOCK_THRESHOLD || "10", 10);
 
@@ -44,6 +46,7 @@ export const getManifest = async (req, res) => {
 // MANDATE: ALWAYS use $inc. NEVER product.stock = x.
 export const adjustStock = async (req, res) => {
   const { productId, deltaCount, reasonCode, noteText } = req.body;
+  let session;
 
   try {
     if (!productId || deltaCount === undefined || !reasonCode) {
@@ -60,8 +63,12 @@ export const adjustStock = async (req, res) => {
 
     // Fetch current state for audit snapshot
     const stateFilter = req.userState === "Global" ? {} : { assignedState: req.userState };
-    const productBefore = await Product.findOne({ _id: productId, ...stateFilter }).lean();
+    session = await mongoose.startSession();
+    session.startTransaction();
+    const productBefore = await Product.findOne({ _id: productId, ...stateFilter }).session(session).lean();
     if (!productBefore) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ success: false, message: "Product not found in your region" });
     }
 
@@ -74,10 +81,12 @@ export const adjustStock = async (req, res) => {
     const updated = await Product.findOneAndUpdate(
       atomicFilter,
       { $inc: { stock: delta } },
-      { new: true }
+      { new: true, session }
     );
 
     if (!updated) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(409).json({
         success: false,
         message: `Cannot reduce stock below zero. Current: ${productBefore.stock}, requested reduction: ${Math.abs(delta)}`,
@@ -85,7 +94,7 @@ export const adjustStock = async (req, res) => {
     }
 
     // Write append-only audit log
-    await InventoryAudit.create({
+    const audit = await InventoryAudit.create([{
       productId,
       actorId:     req.userId,
       deltaCount:  delta,
@@ -94,7 +103,15 @@ export const adjustStock = async (req, res) => {
       stockAfter:  updated.stock,
       noteText:    noteText || "",
       orderId:     null,
-    });
+      assignedState: productBefore.assignedState,
+    }], { session });
+    await googleSheetsService.appendRow(
+      process.env.GOOGLE_SPREADSHEET_ID_INVENTORY,
+      "InventoryAudit!A:G",
+      [audit[0]._id.toString(), productId, delta, reasonCode, req.userId, productBefore.assignedState, new Date().toISOString()],
+    );
+    await session.commitTransaction();
+    session.endSession();
 
     // Fire SSE low-stock alert
     if (updated.stock <= LOW_STOCK_THRESHOLD) {
@@ -115,6 +132,8 @@ export const adjustStock = async (req, res) => {
       isLowStock:  updated.stock <= LOW_STOCK_THRESHOLD,
     });
   } catch (error) {
+    if (session?.inTransaction()) await session.abortTransaction();
+    session?.endSession();
     console.error("[adjustStock]", error);
     res.status(500).json({ success: false, message: error.message });
   }

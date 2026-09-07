@@ -8,17 +8,18 @@ import {
   getEscrowSummary,
 } from "../controllers/ceo.controller.js";
 import { verifyToken, requireRole } from "../middleware/verifyToken.js";
+import { getCeoMetrics, getCeoTelemetry } from "../controllers/tracking.controller.js";
 
 const router = express.Router();
 
 // All CEO routes require super_admin role
-const ceoGuard = [verifyToken, requireRole("super_admin")];
+const ceoGuard = [verifyToken, requireRole("ceo", "super_admin")];
 
 // GET /api/ceo/metrics
-router.get("/metrics",     ...ceoGuard, getSystemMetrics);
+router.get("/metrics",     ...ceoGuard, getCeoMetrics);
 
 // GET /api/ceo/telemetry?from=2024-01-01&to=2024-12-31
-router.get("/telemetry",   ...ceoGuard, getNationalTelemetry);
+router.get("/telemetry",   ...ceoGuard, getCeoTelemetry);
 
 // GET /api/ceo/kyc?status=PENDING&page=1&limit=20
 router.get("/kyc",         ...ceoGuard, getKycQueue);

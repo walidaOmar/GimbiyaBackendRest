@@ -4,6 +4,9 @@ import { EscrowLedger } from "../models/ledger.model.js";
 import { verifyOtp }    from "../utils/otpService.js";
 import { notifyUser }   from "../utils/sseService.js";
 import { getFirebaseStorage } from "../config/firebase.js";
+import { User } from "../models/user.model.js";
+import { AffiliateLink } from "../models/cart.model.js";
+import { incrementTargetMetrics } from "../services/targetMetrics.js";
 
 // ── GET AVAILABLE JOBS ────────────────────────────────────────────────────────
 export const getAvailableJobs = async (req, res) => {
@@ -178,6 +181,15 @@ export const finalizeHandover = async (req, res) => {
         escrowStatus: "RELEASED", actorId: req.userId,
         noteText: `Escrow released on OTP handover. Order ${order.orderRef}`,
       }], { session });
+
+      const link = order.affiliateReferralCode
+        ? await AffiliateLink.findOne({ code: order.affiliateReferralCode }).session(session).lean()
+        : null;
+      const affiliate = link
+        ? await User.findOne({ _id: link.partnerId, role: "affiliate", assignedState: order.assignedState }).session(session)
+        : null;
+      const coordinator = await User.findOne({ role: "developer_coordinator", assignedState: order.assignedState }).session(session);
+      await incrementTargetMetrics(order.grossTotalKobo, affiliate?._id, coordinator?._id, order.assignedState, session);
 
       await session.commitTransaction();
     } catch (txErr) {

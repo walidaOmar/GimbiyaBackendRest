@@ -19,6 +19,7 @@ import storeRoutes from "./routes/store.route.js";
 import propertyRoutes from "./routes/property.route.js";
 import groupOrderRoutes from "./routes/groupOrder.route.js";
 import waiverRoutes from "./routes/waiver.route.js";
+import trackingRoutes from "./routes/tracking.route.js";
 
 import { handleSSEConnection } from "./utils/sseService.js";
 import { verifyToken } from "./middleware/verifyToken.js";
@@ -86,6 +87,7 @@ app.use("/api/stores", storeRoutes);
 app.use("/api/properties", propertyRoutes);
 app.use("/api/group-orders", groupOrderRoutes);
 app.use("/api/waivers", waiverRoutes);
+app.use("/api/tracking", trackingRoutes);
 
 app.get("/api/events/subscribe", verifyToken, handleSSEConnection);
 

@@ -4,6 +4,7 @@ import { WaiverQuota } from "../models/waiverQuota.model.js";
 import { WaiverRequest } from "../models/waiverRequest.model.js";
 import { FulfillmentCoupon } from "../models/fulfillmentCoupon.model.js";
 import { User } from "../models/user.model.js";
+import { googleSheetsService } from "../services/googleSheetsRuntime.js";
 
 function generateCouponCode() {
   return "FUL-" + crypto.randomBytes(3).toString("hex").toUpperCase();
@@ -200,6 +201,12 @@ export const approveWaiverRequest = async (req, res) => {
     quota.usedSlots += request.requestedSlots;
     if (quota.usedSlots >= quota.totalSlots) quota.isActive = false;
     await quota.save({ session });
+
+    await googleSheetsService.appendRow(
+      process.env.GOOGLE_SPREADSHEET_ID_WAIVERS,
+      "Waivers!A:H",
+      [coupon[0].code, req.userId, request.affiliateId, coupon[0].totalSlots, coupon[0].usedSlots, coupon[0].budgetKobo, coupon[0].usedBudgetKobo, coupon[0].expiresAt.toISOString()],
+    );
 
     await session.commitTransaction();
 
