@@ -67,6 +67,15 @@ const userSchema = new mongoose.Schema(
     onboardedBy: {
       type: mongoose.Schema.Types.ObjectId, ref: "User", default: null,
     },
+    onboardingDate: {
+      type: Date, default: null,
+    },
+    onboardingSource: {
+      type: String, default: null,
+    },
+    staffNotes: {
+      type: String, default: "",
+    },
     monnifySubAccountCode: {
       type: String, default: null,
     },

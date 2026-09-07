@@ -42,6 +42,29 @@ export const verifyToken = async (req, res, next) => {
   }
 };
 
+export const optionalVerifyToken = async (req, res, next) => {
+  const token = req.cookies?.token || (req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.slice(7)
+    : null);
+  if (!token) return next();
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = decoded?.userId
+      ? await User.findById(decoded.userId).select("-password")
+      : null;
+    if (user?.isActive) {
+      req.userId = decoded.userId;
+      req.user = user;
+      req.userRole = user.role;
+      req.userState = user.assignedState;
+    }
+  } catch (error) {
+    // Public catalog access remains available when an optional token is invalid.
+  }
+  next();
+};
+
 export const requireRole = (...allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {

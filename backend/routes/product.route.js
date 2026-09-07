@@ -8,13 +8,13 @@ import {
   toggleActive,
 } from "../controllers/product.controller.js";
 import { getMerchantAnalytics, getSettlementLedger } from "../controllers/merchant.controller.js";
-import { verifyToken, requireRole, requireVerified } from "../middleware/verifyToken.js";
+import { optionalVerifyToken, verifyToken, requireRole, requireVerified } from "../middleware/verifyToken.js";
 
 const router = express.Router();
 
 // ── PUBLIC ────────────────────────────────────────────────────────────────────
 // GET /api/products?assignedState=Tafawa%20balewa%20refinery&buildingFloor=LEVEL_1&page=1&limit=20
-router.get("/",     getCatalog);
+router.get("/",     optionalVerifyToken, getCatalog);
 router.get("/:id",  getProduct);
 
 // ── MERCHANT ──────────────────────────────────────────────────────────────────

@@ -17,6 +17,11 @@ const storeOnboardingRequestSchema = new mongoose.Schema(
     businessEmail: { type: String, required: true, lowercase: true, trim: true },
     businessPhone: { type: String, default: "" },
     commerceSegment: { type: String, enum: ["manufacturer", "wholesaler", "retailer", "service_provider", "logistics"], required: true },
+    businessType: { type: String, enum: ["manufacturer", "wholesaler", "retailer", "service_provider"], default: "retailer" },
+    marketTier: { type: String, enum: ["consumer", "wholesale", "manufacturing"], default: "consumer" },
+    businessSector: { type: String, enum: ["retail", "wholesale", "manufacturing"], default: null },
+    primaryCategory: { type: String, default: null, trim: true },
+    secondarySubcategory: { type: String, default: null, trim: true },
     serviceCategory: { type: String, default: null },
     primaryState: { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true },
 

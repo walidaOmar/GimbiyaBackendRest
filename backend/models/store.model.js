@@ -42,6 +42,25 @@ const storeSchema = new mongoose.Schema(
       default: "retailer",
       index: true,
     },
+    businessType: {
+      type: String,
+      enum: ["manufacturer", "wholesaler", "retailer", "service_provider"],
+      default: "retailer",
+      index: true,
+    },
+    marketTier: {
+      type: String,
+      enum: ["consumer", "wholesale", "manufacturing"],
+      default: "consumer",
+      index: true,
+    },
+    businessSector: {
+      type: String,
+      enum: ["retail", "wholesale", "manufacturing"],
+      default: null,
+    },
+    primaryCategory: { type: String, default: null, trim: true },
+    secondarySubcategory: { type: String, default: null, trim: true },
     serviceCategory: { type: String, default: null },
 
     submittedBy: {
@@ -73,5 +92,6 @@ const storeSchema = new mongoose.Schema(
 storeSchema.index({ verificationStatus: 1, primaryState: 1 });
 storeSchema.index({ businessOwnerId: 1 });
 storeSchema.index({ onboardedBy: 1 });
+storeSchema.index({ primaryState: 1, businessType: 1, verificationStatus: 1 });
 
 export const Store = mongoose.model("Store", storeSchema);

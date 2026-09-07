@@ -13,13 +13,14 @@ import {
   getAvailableStaff,
 } from "../controllers/store.controller.js";
 import { verifyToken, requireRole } from "../middleware/verifyToken.js";
+import { restrictToOwnState, validateStateScope } from "../middleware/stateIsolation.js";
 
 const router = express.Router();
 
 router.use(verifyToken);
 
 // Coordinator: submit store onboarding request
-router.post("/requests", requireRole("developer_coordinator"), submitStoreRequest);
+router.post("/requests", requireRole("developer_coordinator"), validateStateScope, restrictToOwnState, submitStoreRequest);
 
 // CEO: list pending store requests
 router.get("/requests/pending", requireRole("super_admin"), getPendingStoreRequests);
@@ -32,7 +33,7 @@ router.post("/requests/:requestId/approve", requireRole("super_admin"), approveS
 router.post("/requests/:requestId/reject", requireRole("super_admin"), rejectStoreRequest);
 
 // Verified stores list
-router.get("/", getStores);
+router.get("/", validateStateScope, getStores);
 
 // Single store with branches
 router.get("/:id", getStoreById);

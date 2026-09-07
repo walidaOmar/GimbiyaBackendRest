@@ -5,6 +5,7 @@ import { Store } from "../models/store.model.js";
 import { Branch } from "../models/branch.model.js";
 import { User } from "../models/user.model.js";
 import { StoreOnboardingRequest } from "../models/storeOnboardingRequest.model.js";
+import { marketTierForBusinessType, validateClassification } from "../config/businessClassification.js";
 
 export const VALID_COMMERCE_SEGMENTS = ["manufacturer", "wholesaler", "retailer", "service_provider", "logistics"];
 
@@ -18,6 +19,7 @@ export const getStores = async (req, res) => {
 
     if (status) filter.verificationStatus = status;
     if (state) filter.primaryState = state;
+    if (req.userRole === "developer_coordinator") filter.primaryState = req.userState;
     if (search) {
       filter.$or = [
         { businessName: { $regex: search, $options: "i" } },
@@ -82,6 +84,11 @@ export const submitStoreRequest = async (req, res) => {
       businessEmail,
       businessPhone,
       commerceSegment,
+      businessType,
+      marketTier,
+      businessSector,
+      primaryCategory,
+      secondarySubcategory,
       serviceCategory,
       primaryState,
       nin,
@@ -95,6 +102,21 @@ export const submitStoreRequest = async (req, res) => {
 
     if (!businessName || !businessEmail || !commerceSegment || !primaryState || !nin || !cacNumber || !tinNumber) {
       return res.status(400).json({ success: false, message: "All required fields must be provided" });
+    }
+
+    let classification = {
+      businessType: businessType || (commerceSegment === "logistics" ? "service_provider" : commerceSegment),
+      marketTier: marketTier || marketTierForBusinessType(businessType || commerceSegment),
+    };
+    if (businessSector || primaryCategory || secondarySubcategory) {
+      if (!businessSector || !primaryCategory || !secondarySubcategory) {
+        return res.status(400).json({ success: false, message: "businessSector, primaryCategory, and secondarySubcategory must be provided together" });
+      }
+      const result = validateClassification(businessSector, primaryCategory, secondarySubcategory);
+      if (!result.valid) {
+        return res.status(400).json({ success: false, message: "Invalid business classification path" });
+      }
+      classification = result;
     }
 
     if (req.userRole === "developer_coordinator" && primaryState !== req.userState) {
@@ -131,6 +153,11 @@ export const submitStoreRequest = async (req, res) => {
       businessEmail: businessEmail.toLowerCase(),
       businessPhone: businessPhone || "",
       commerceSegment,
+      businessType: classification.businessType,
+      marketTier: classification.marketTier,
+      businessSector: businessSector || null,
+      primaryCategory: primaryCategory || null,
+      secondarySubcategory: secondarySubcategory || null,
       serviceCategory: serviceCategory || null,
       primaryState,
       nin,
@@ -243,6 +270,11 @@ export const approveStoreRequest = async (req, res) => {
         businessEmail: request.businessEmail,
         businessPhone: request.businessPhone,
         commerceSegment: request.commerceSegment,
+        businessType: request.businessType,
+        marketTier: request.marketTier,
+        businessSector: request.businessSector,
+        primaryCategory: request.primaryCategory,
+        secondarySubcategory: request.secondarySubcategory,
         serviceCategory: request.serviceCategory || null,
         primaryState: request.primaryState,
         nin: request.nin,
