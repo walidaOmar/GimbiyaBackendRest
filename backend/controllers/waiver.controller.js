@@ -87,12 +87,16 @@ export const submitWaiverRequest = async (req, res) => {
       return res.status(400).json({ success: false, message: "targetUserIds and requestedSlots are required" });
     }
 
+    if (targetUserIds.length < 2 || targetUserIds.length > 10) {
+      return res.status(400).json({ success: false, message: "A waiver request must include between 2 and 10 target users" });
+    }
+
     if (targetUserIds.length !== Number(requestedSlots)) {
       return res.status(400).json({ success: false, message: "Number of targetUserIds must match requestedSlots" });
     }
 
     const affiliate = await User.findById(req.userId);
-    const coordinatorId = affiliate?.onboardingChain?.[affiliate.onboardingChain.length - 1] || affiliate?.onboardedBy;
+    const coordinatorId = affiliate?.onboardedBy;
 
     if (!coordinatorId) {
       return res.status(400).json({ success: false, message: "No coordinator found in your onboarding chain" });
@@ -101,6 +105,21 @@ export const submitWaiverRequest = async (req, res) => {
     const targetUsers = await User.find({ _id: { $in: targetUserIds } }).select("_id name email");
     if (targetUsers.length !== targetUserIds.length) {
       return res.status(400).json({ success: false, message: "One or more target user IDs are invalid" });
+    }
+
+    const cooldownCutoff = new Date(Date.now() - 96 * 60 * 60 * 1000);
+    const recentApproval = await WaiverRequest.findOne({
+      affiliateId: req.userId,
+      targetUserIds: { $in: targetUserIds },
+      status: "APPROVED",
+      reviewedAt: { $gte: cooldownCutoff },
+    }).lean();
+
+    if (recentApproval) {
+      return res.status(400).json({
+        success: false,
+        message: "One or more of these target users were already approved for a waiver from you within the last 96 hours",
+      });
     }
 
     const quota = await WaiverQuota.findOne({
@@ -177,6 +196,7 @@ export const approveWaiverRequest = async (req, res) => {
       return res.status(400).json({ success: false, message: "Insufficient quota slots" });
     }
 
+    const approvedAt = new Date();
     const coupon = await FulfillmentCoupon.create(
       [{
         code: generateCouponCode(),
@@ -184,6 +204,7 @@ export const approveWaiverRequest = async (req, res) => {
         coordinatorId: req.userId,
         waiverRequestId: request._id,
         totalSlots: request.requestedSlots,
+        eligibleUserIds: request.targetUserIds,
         budgetKobo: quota.budgetKobo > 0
           ? Math.floor(quota.budgetKobo / Math.max(1, quota.remainingSlots)) * request.requestedSlots
           : 0,
@@ -194,7 +215,8 @@ export const approveWaiverRequest = async (req, res) => {
 
     request.status = "APPROVED";
     request.reviewedBy = req.userId;
-    request.reviewedAt = new Date();
+    request.reviewedAt = approvedAt;
+    request.expiresAt = new Date(approvedAt.getTime() + 6 * 60 * 60 * 1000);
     request.couponId = coupon[0]._id;
     await request.save({ session });
 

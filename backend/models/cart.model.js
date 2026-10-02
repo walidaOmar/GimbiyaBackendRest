@@ -1,12 +1,38 @@
 import mongoose from "mongoose";
 
+export const CART_STATUSES = ["ACTIVE", "CHECKED_OUT", "ABANDONED"];
+
+const cartSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, unique: true, index: true },
+    status: { type: String, enum: CART_STATUSES, default: "ACTIVE", index: true },
+  },
+  { timestamps: true }
+);
+
+export const Cart = mongoose.model("Cart", cartSchema);
+
 // ─── CART ITEM ────────────────────────────────────────────────────────────────
 const cartItemSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    cartId: { type: mongoose.Schema.Types.ObjectId, ref: "Cart", default: null, index: true },
     productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
     quantity: { type: Number, required: true, min: 1 },
+    merchantId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    priceSnapshot: { type: Number, default: null },
+    serviceItems: [{
+      offeringId: { type: mongoose.Schema.Types.ObjectId, ref: "ServiceOffering", default: null },
+      serviceProviderId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+      serviceType: { type: String, required: true },
+      priceSnapshot: { type: Number, required: true },
+      status: { type: String, enum: ["PENDING", "CONFIRMED", "DECLINED", "COMPLETED"], default: "PENDING" },
+      addedAt: { type: Date, default: Date.now },
+    }],
+    paymentSource: { type: String, enum: ["CONSUMER", "AFFILIATE_WAIVER"], default: "CONSUMER" },
+    waiverAllocationId: { type: mongoose.Schema.Types.ObjectId, ref: "WaiverAllocation", default: null },
     fulfillmentCouponCode: { type: String, default: null },
+    fulfillmentGroupId: { type: mongoose.Schema.Types.ObjectId, ref: "FulfillmentGroup", default: null },
   },
   { timestamps: true }
 );

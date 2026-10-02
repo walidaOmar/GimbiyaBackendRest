@@ -20,9 +20,18 @@ import propertyRoutes from "./routes/property.route.js";
 import groupOrderRoutes from "./routes/groupOrder.route.js";
 import waiverRoutes from "./routes/waiver.route.js";
 import trackingRoutes from "./routes/tracking.route.js";
+import publicIdRoutes from "./routes/publicId.route.js";
+import cartV2Routes from "./routes/cartV2.route.js";
+import deliveryV2Routes from "./routes/deliveryV2.route.js";
+import paymentRoutes from "./routes/payment.route.js";
+import relationshipRoutes from "./routes/relationship.route.js";
+import serviceCatalogRoutes from "./routes/serviceCatalog.route.js";
 
+import cron from "node-cron";
 import { handleSSEConnection } from "./utils/sseService.js";
 import { verifyToken } from "./middleware/verifyToken.js";
+import { runWaiverExpiryCheck } from "./jobs/waiverExpiryJob.js";
+import { runRetentionStatusCheck } from "./jobs/retentionStatusJob.js";
 
 dotenv.config();
 
@@ -52,6 +61,21 @@ app.use(
 );
 app.options("*", cors());
 
+app.use("/api/payments/webhook", express.raw({ type: "application/json" }), (req, res, next) => {
+  if (!req.body) {
+    req.rawBody = "";
+    return next();
+  }
+
+  req.rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : String(req.body);
+  try {
+    req.body = JSON.parse(req.rawBody);
+  } catch (error) {
+    req.body = {};
+  }
+  next();
+});
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -64,6 +88,7 @@ const availableRoutes = [
   "GET /api/auth/check-auth",
   "GET /api/products",
   "POST /api/orders/checkout",
+  "GET /api/public-ids/me",
   "GET /api/events/subscribe",
 ];
 
@@ -88,6 +113,12 @@ app.use("/api/properties", propertyRoutes);
 app.use("/api/group-orders", groupOrderRoutes);
 app.use("/api/waivers", waiverRoutes);
 app.use("/api/tracking", trackingRoutes);
+app.use("/api/public-ids", publicIdRoutes);
+app.use("/api/cart-v2", cartV2Routes);
+app.use("/api/delivery-v2", deliveryV2Routes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/relationships", relationshipRoutes);
+app.use("/api/service-catalog", serviceCatalogRoutes);
 
 app.get("/api/events/subscribe", verifyToken, handleSSEConnection);
 
@@ -111,6 +142,9 @@ async function bootstrap() {
   await connectDB();
   await connectRedis();
   initFirebase();
+
+  cron.schedule("*/10 * * * *", runWaiverExpiryCheck);
+  cron.schedule("0 * * * *", runRetentionStatusCheck);
 
   app.listen(PORT, () => {
     console.log("\n╔══════════════════════════════════════════════╗");

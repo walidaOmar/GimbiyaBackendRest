@@ -8,6 +8,7 @@ import { Store } from "../models/store.model.js";
 import { User } from "../models/user.model.js";
 import { EscrowLedger } from "../models/ledger.model.js";
 import { Settlement } from "../models/settlement.model.js";
+import { FulfillmentGroup } from "../models/fulfillmentGroup.model.js";
 
 const isCeo = (req) => ["ceo", "super_admin"].includes(req.userRole);
 const scope = (req, field = "assignedState") => isCeo(req) ? {} : { [field]: req.userState };
@@ -40,13 +41,31 @@ export const getAffiliateSummary = async (req, res) => {
 export const getCoordinatorRegion = async (req, res) => {
   try {
     const state = req.userState;
-    const [gmv, activeShops, fulfillment] = await Promise.all([
+    const [gmv, activeShops, legacyFulfillment, multiOrderIds] = await Promise.all([
       Order.aggregate([{ $match: { assignedState: state } }, { $group: { _id: null, gmvKobo: { $sum: "$grossTotalKobo" } } }]),
       Store.countDocuments({ primaryState: state, verificationStatus: "VERIFIED" }),
-      Order.aggregate([{ $match: { assignedState: state } }, { $group: { _id: null, total: { $sum: 1 }, fulfilled: { $sum: { $cond: [{ $eq: ["$status", "DELIVERED"] }, 1, 0] } } } }]),
+      Order.aggregate([
+        { $match: { assignedState: state, isMultiMerchant: { $ne: true } } },
+        { $group: { _id: null, total: { $sum: 1 }, fulfilled: { $sum: { $cond: [{ $eq: ["$status", "DELIVERED"] }, 1, 0] } } } },
+      ]),
+      Order.find({ assignedState: state, isMultiMerchant: true }).select("_id").lean(),
     ]);
-    const total = fulfillment[0]?.total || 0;
-    return res.json({ success: true, assignedState: state, regionalGmvKobo: gmv[0]?.gmvKobo || 0, activeShops, fulfillmentPercent: total ? Math.round((fulfillment[0].fulfilled / total) * 10000) / 100 : 0 });
+
+    const multiGroupStats = await FulfillmentGroup.aggregate([
+      { $match: { orderId: { $in: multiOrderIds.map((order) => order._id) } } },
+      { $group: { _id: null, total: { $sum: 1 }, fulfilled: { $sum: { $cond: [{ $eq: ["$status", "DELIVERED"] }, 1, 0] } } } },
+    ]);
+
+    const total = (legacyFulfillment[0]?.total || 0) + (multiGroupStats[0]?.total || 0);
+    const fulfilled = (legacyFulfillment[0]?.fulfilled || 0) + (multiGroupStats[0]?.fulfilled || 0);
+
+    return res.json({
+      success: true,
+      assignedState: state,
+      regionalGmvKobo: gmv[0]?.gmvKobo || 0,
+      activeShops,
+      fulfillmentPercent: total ? Math.round((fulfilled / total) * 10000) / 100 : 0,
+    });
   } catch (error) { return res.status(500).json({ success: false, message: error.message }); }
 };
 

@@ -19,6 +19,7 @@ export const USER_ROLES = [
 
 export const NIGERIAN_STATES = ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market", "Global"];
 export const KYC_STATUSES    = ["PENDING", "APPROVED", "REJECTED"];
+export const KYC_TIERS = [1, 2, 3]; // 1=Basic, 2=Identity Verified (NIN), 3=Financially Verified (BVN)
 
 const userSchema = new mongoose.Schema(
   {
@@ -59,6 +60,24 @@ const userSchema = new mongoose.Schema(
     isActive: {
       type: Boolean, default: true, index: true,
     },
+    publicId: {
+      type: String, unique: true, sparse: true, index: true,
+    },
+    kycTier: {
+      type: Number, enum: KYC_TIERS, default: 1,
+    },
+    ninVerified: {
+      type: Boolean, default: false,
+    },
+    ninVerifiedAt: {
+      type: Date, default: null,
+    },
+    bvnVerified: {
+      type: Boolean, default: false,
+    },
+    bvnVerifiedAt: {
+      type: Date, default: null,
+    },
     kycStatus: {
       type: String, enum: KYC_STATUSES, default: "PENDING",
     },
@@ -87,5 +106,13 @@ const userSchema = new mongoose.Schema(
 // Compound indexes for common query patterns
 userSchema.index({ role: 1, assignedState: 1 });
 userSchema.index({ kycStatus: 1, role: 1 });
+
+userSchema.pre("save", async function (next) {
+  if (this.isNew && !this.publicId) {
+    const { generatePublicId } = await import("../utils/generatePublicId.js");
+    this.publicId = await generatePublicId();
+  }
+  next();
+});
 
 export const User = mongoose.model("User", userSchema);

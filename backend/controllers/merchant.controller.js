@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { Order }        from "../models/order.model.js";
 import { Product }      from "../models/product.model.js";
+import { FulfillmentGroup } from "../models/fulfillmentGroup.model.js";
 import { EscrowLedger } from "../models/ledger.model.js";
 
 // ── MERCHANT ANALYTICS ────────────────────────────────────────────────────────
@@ -46,6 +47,36 @@ export const getMerchantAnalytics = async (req, res) => {
 };
 
 // ── SETTLEMENT LEDGER ─────────────────────────────────────────────────────────
+export const getMerchantAnalyticsV2 = async (req, res) => {
+  try {
+    const merchantId = new mongoose.Types.ObjectId(req.userId);
+
+    const [legacyStats, groupStats, topProducts] = await Promise.all([
+      Order.aggregate([
+        { $match: { merchantId, isMultiMerchant: { $ne: true } } },
+        { $group: { _id: "$status", count: { $sum: 1 }, totalKobo: { $sum: "$grossTotalKobo" }, merchantNetKobo: { $sum: "$merchantNetKobo" } } },
+      ]),
+      FulfillmentGroup.aggregate([
+        { $match: { merchantId } },
+        { $unwind: "$items" },
+        { $group: { _id: "$status", count: { $sum: 1 }, totalKobo: { $sum: "$items.subtotalKobo" } } },
+      ]),
+      Product.find({ merchantId: req.userId }).select("name priceKobo soldCount stock averageRating").sort({ soldCount: -1 }).limit(5).lean(),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      legacyOrderBreakdown: legacyStats,
+      fulfillmentGroupBreakdown: groupStats,
+      topProducts,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[getMerchantAnalyticsV2]", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const getSettlementLedger = async (req, res) => {
   try {
     const { page = 1, limit = 20, from, to } = req.query;

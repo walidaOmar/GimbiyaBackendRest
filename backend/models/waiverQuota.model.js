@@ -9,6 +9,8 @@ const waiverQuotaSchema = new mongoose.Schema(
     budgetKobo: { type: Number, default: 0, min: 0 },
     usedBudgetKobo: { type: Number, default: 0, min: 0 },
     note: { type: String, default: "" },
+    eligibleProductIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product", default: [] }],
+    eligibleCategoryIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "Category", default: [] }],
     expiresAt: { type: Date, required: true },
     isActive: { type: Boolean, default: true },
   },

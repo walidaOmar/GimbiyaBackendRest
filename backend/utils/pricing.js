@@ -91,32 +91,45 @@ export function generateOrderRef(state, sequenceNum) {
 }
 
 /**
- * buildMonnifyPayload — constructs payment payload for Monnify API
+ * buildMonnifyPayload — constructs payment payload for Monnify API.
+ *
+ * Accepts either a legacy single merchant string or a split-array payload for
+ * multi-merchant orders. The array shape matches Monnify's income split design.
  */
-export function buildMonnifyPayload(pricing, orderRef, merchantSubAccountCode, customerName, customerEmail, paymentMethod) {
+export function buildMonnifyPayload(pricing, orderRef, merchantSubAccountCodeOrSplits, customerName, customerEmail, paymentMethod) {
   if (pricing.grossTotalKobo <= 0)
     throw new Error("Cannot build Monnify payload for zero-value order.");
 
-  const merchantSplitPct = parseFloat(
-    ((pricing.merchantNetKobo / pricing.grossTotalKobo) * 100).toFixed(4)
-  );
+  const splitList = typeof merchantSubAccountCodeOrSplits === "string"
+    ? [{
+        subAccountCode: merchantSubAccountCodeOrSplits,
+        splitAmountKobo: pricing.merchantNetKobo,
+        splitAmountNaira: pricing.merchantNetNaira,
+      }]
+    : Array.isArray(merchantSubAccountCodeOrSplits)
+      ? merchantSubAccountCodeOrSplits
+      : [];
+
+  if (splitList.length === 0) {
+    throw new Error("Monnify payload requires at least one split entry");
+  }
 
   return {
-    amount:             pricing.grossTotalNaira,
+    amount: pricing.grossTotalNaira,
     customerName,
     customerEmail,
-    paymentReference:   orderRef,
+    paymentReference: orderRef,
     paymentDescription: `Gimbiya Mall Order ${orderRef}`,
-    currencyCode:       "NGN",
-    contractCode:       process.env.MONNIFY_CONTRACT_CODE || "",
-    redirectUrl:        `${process.env.CLIENT_URL}/orders/${orderRef}/status`,
-    paymentMethods:     [paymentMethod || "ACCOUNT_TRANSFER"],
-    incomeSplitConfig: [{
-      subAccountCode: merchantSubAccountCode,
-      feePercentage:  merchantSplitPct,
-      splitAmount:    pricing.merchantNetNaira,
-      feeBearer:      false,
-    }],
+    currencyCode: "NGN",
+    contractCode: process.env.MONNIFY_CONTRACT_CODE || "",
+    redirectUrl: `${process.env.CLIENT_URL}/orders/${orderRef}/status`,
+    paymentMethods: [paymentMethod || "ACCOUNT_TRANSFER"],
+    incomeSplitConfig: splitList.map((split) => ({
+      subAccountCode: split.subAccountCode,
+      feePercentage: parseFloat(((split.splitAmountKobo / pricing.grossTotalKobo) * 100).toFixed(4)),
+      splitAmount: split.splitAmountNaira,
+      feeBearer: false,
+    })),
   };
 }
 

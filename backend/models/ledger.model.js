@@ -8,6 +8,9 @@ const escrowLedgerSchema = new mongoose.Schema(
     orderId: {
       type: mongoose.Schema.Types.ObjectId, ref: "Order", required: true, index: true,
     },
+    fulfillmentGroupId: {
+      type: mongoose.Schema.Types.ObjectId, ref: "FulfillmentGroup", default: null, index: true,
+    },
     entryType: {
       type: String,
       enum: ["LOCK", "RELEASE", "REFUND", "FEE_CAPTURE", "FREEZE", "UNFREEZE"],

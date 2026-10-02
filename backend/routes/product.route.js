@@ -7,7 +7,7 @@ import {
   updatePrice,
   toggleActive,
 } from "../controllers/product.controller.js";
-import { getMerchantAnalytics, getSettlementLedger } from "../controllers/merchant.controller.js";
+import { getMerchantAnalytics, getMerchantAnalyticsV2, getSettlementLedger } from "../controllers/merchant.controller.js";
 import { optionalVerifyToken, verifyToken, requireRole, requireVerified } from "../middleware/verifyToken.js";
 
 const router = express.Router();
@@ -53,6 +53,13 @@ router.get(
   verifyToken,
   requireRole("business_owner", "super_admin"),
   getMerchantAnalytics
+);
+
+router.get(
+  "/merchant/analytics-v2",
+  verifyToken,
+  requireRole("business_owner", "super_admin"),
+  getMerchantAnalyticsV2
 );
 
 router.get(

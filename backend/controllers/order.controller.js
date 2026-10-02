@@ -57,6 +57,10 @@ export const applyFulfillmentCoupon = async (req, res) => {
     if (new Date() > coupon.expiresAt) return res.status(400).json({ success: false, message: "Coupon expired" });
     if (coupon.remainingSlots <= 0) return res.status(400).json({ success: false, message: "No slots left" });
 
+    if (coupon.eligibleUserIds?.length > 0 && !coupon.eligibleUserIds.some((id) => id.toString() === userId)) {
+      return res.status(403).json({ success: false, message: "This fulfillment code was not issued for your account" });
+    }
+
     const alreadyClaimed = coupon.claimedBy.find((entry) => entry.userId?.toString() === userId);
     if (alreadyClaimed) {
       await CartItem.updateMany({ userId }, { fulfillmentCouponCode: coupon.code });

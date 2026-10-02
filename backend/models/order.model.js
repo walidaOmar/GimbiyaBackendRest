@@ -27,6 +27,8 @@ const orderSchema = new mongoose.Schema(
 
     buyerId:    { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
     merchantId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    isMultiMerchant: { type: Boolean, default: false },
+    fulfillmentGroupIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "FulfillmentGroup", default: [] }],
     riderId:    { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
 
     items: [orderItemSchema],

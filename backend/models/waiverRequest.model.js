@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-export const WAIVER_STATUSES = ["PENDING", "APPROVED", "REJECTED"];
+export const WAIVER_STATUSES = ["PENDING", "APPROVED", "REJECTED", "EXPIRED"];
 
 const waiverRequestSchema = new mongoose.Schema(
   {
@@ -14,6 +14,7 @@ const waiverRequestSchema = new mongoose.Schema(
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     reviewNote: { type: String, default: "" },
     reviewedAt: { type: Date, default: null },
+    expiresAt: { type: Date, default: null },
     couponId: { type: mongoose.Schema.Types.ObjectId, ref: "FulfillmentCoupon", default: null },
   },
   { timestamps: true }

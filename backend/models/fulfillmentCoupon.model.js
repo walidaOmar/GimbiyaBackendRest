@@ -9,6 +9,7 @@ const fulfillmentCouponSchema = new mongoose.Schema(
     coordinatorId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     waiverRequestId: { type: mongoose.Schema.Types.ObjectId, ref: "WaiverRequest", required: true },
     totalSlots: { type: Number, required: true, min: 1 },
+    eligibleUserIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     usedSlots: { type: Number, default: 0, min: 0 },
     budgetKobo: { type: Number, default: 0, min: 0 },
     usedBudgetKobo: { type: Number, default: 0, min: 0 },

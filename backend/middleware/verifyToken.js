@@ -99,3 +99,13 @@ export const requireKyc = (req, res, next) => {
   }
   next();
 };
+
+export const requireKycTier = (minTier) => (req, res, next) => {
+  if (!req.user?.kycTier || req.user.kycTier < minTier) {
+    return res.status(403).json({
+      success: false,
+      message: `This action requires KYC Tier ${minTier} or higher`,
+    });
+  }
+  next();
+};
