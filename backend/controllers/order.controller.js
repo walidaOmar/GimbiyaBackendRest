@@ -8,6 +8,8 @@ import { createOtpPair }  from "../utils/otpService.js";
 import { notifyUser }     from "../utils/sseService.js";
 import { FulfillmentCoupon } from "../models/fulfillmentCoupon.model.js";
 import { AffiliateClick } from "../models/affiliateClick.model.js";
+import { FulfillmentGroup } from "../models/fulfillmentGroup.model.js";
+import { ServiceOffering } from "../models/serviceOffering.model.js";
 
 // ── CART ──────────────────────────────────────────────────────────────────────
 export const updateCart = async (req, res) => {
@@ -109,15 +111,14 @@ export const checkout = async (req, res) => {
 
     // Step 1: Validate and snapshot all products
     const productIds = cartItems.map((i) => new mongoose.Types.ObjectId(i.productId));
-    const products   = await Product.find({ _id: { $in: productIds }, isActive: true }).lean();
+    const products = await Product.find({ _id: { $in: productIds }, isActive: true }).lean();
 
     if (products.length !== cartItems.length) {
       return res.status(400).json({ success: false, message: "One or more products are unavailable" });
     }
 
-    const productMap  = new Map(products.map((p) => [p._id.toString(), p]));
-    let merchantId    = null;
-    let orderState    = null;
+    const productMap = new Map(products.map((p) => [p._id.toString(), p]));
+    const orderState = products[0].assignedState;
 
     const pricedItems = cartItems.map((item) => {
       const product = productMap.get(item.productId);
@@ -125,35 +126,84 @@ export const checkout = async (req, res) => {
       if (product.stock < item.quantity) {
         throw new Error(`Insufficient stock for "${product.name}". Available: ${product.stock}`);
       }
-      if (!merchantId) {
-        merchantId = product.merchantId;
-        orderState = product.assignedState;
-      }
       return {
-        productId:     product._id,
-        productName:   product.name,
-        quantity:      item.quantity,
+        productId: product._id,
+        productName: product.name,
+        quantity: item.quantity,
         unitPriceKobo: product.priceKobo,
-        subtotalKobo:  product.priceKobo * item.quantity,
+        subtotalKobo: product.priceKobo * item.quantity,
+        merchantId: product.merchantId,
+        buildingFloor: product.buildingFloor,
       };
     });
 
-    // Step 2: Calculate pricing — SINGLE SOURCE OF TRUTH
-    const commissionPct = getPlatformCommission(orderState, products[0].buildingFloor);
-    const pricing = calculateOrderPricing(
-      pricedItems.map((i) => ({ unitPriceKobo: i.unitPriceKobo, quantity: i.quantity })),
-      commissionPct
+    // Validate + price any attached services against the real catalog — never trust client-sent price
+    const serviceOfferingIds = cartItems.flatMap((i) => (i.serviceItems || []).map((s) => s.offeringId)).filter(Boolean);
+    const offerings = serviceOfferingIds.length
+      ? await ServiceOffering.find({ _id: { $in: serviceOfferingIds }, isActive: true }).lean()
+      : [];
+    const offeringMap = new Map(offerings.map((o) => [o._id.toString(), o]));
+
+    const pricedServiceItems = cartItems.flatMap((item) =>
+      (item.serviceItems || []).map((s) => {
+        const offering = offeringMap.get(s.offeringId);
+        if (!offering) throw new Error(`Service offering ${s.offeringId} not found or inactive`);
+        return {
+          parentProductId: item.productId,
+          providerId: offering.providerId,
+          serviceType: offering.serviceType,
+          priceKobo: offering.priceKobo,
+        };
+      })
     );
 
-    // Step 3: Generate OTP pair — rawOtp shown to buyer only
-    const { rawOtp, otpHash } = await createOtpPair();
+    // Group by fulfillment party: one group per merchant, one per distinct service provider
+    const merchantGroups = new Map();
+    for (const item of pricedItems) {
+      const key = item.merchantId.toString();
+      if (!merchantGroups.has(key)) merchantGroups.set(key, []);
+      merchantGroups.get(key).push(item);
+    }
+    const serviceGroups = new Map();
+    for (const svc of pricedServiceItems) {
+      const key = svc.providerId.toString();
+      if (!serviceGroups.has(key)) serviceGroups.set(key, []);
+      serviceGroups.get(key).push(svc);
+    }
 
-    // Step 4: MongoDB transaction — atomic across stock, order, ledger, audit
+    const isMultiMerchant = merchantGroups.size > 1 || serviceGroups.size > 0;
+
+    // Price EACH group with its own correct commission rate, then sum — fixes the flat-rate-from-first-item bug
+    const groupPricings = [];
+    for (const [merchantId, items] of merchantGroups) {
+      const commissionPct = getPlatformCommission(orderState, items[0].buildingFloor);
+      const pricing = calculateOrderPricing(items.map((i) => ({ unitPriceKobo: i.unitPriceKobo, quantity: i.quantity })), commissionPct);
+      groupPricings.push({ type: "PRODUCT", merchantId, items, pricing });
+    }
+    for (const [providerId, services] of serviceGroups) {
+      const commissionPct = getPlatformCommission(orderState);
+      const pricing = calculateOrderPricing(services.map((s) => ({ unitPriceKobo: s.priceKobo, quantity: 1 })), commissionPct);
+      groupPricings.push({ type: "SERVICE", merchantId: providerId, items: services, pricing });
+    }
+
+    const pricing = {
+      grossTotalKobo: groupPricings.reduce((s, g) => s + g.pricing.grossTotalKobo, 0),
+      platformFeeKobo: groupPricings.reduce((s, g) => s + g.pricing.platformFeeKobo, 0),
+      merchantNetKobo: groupPricings.reduce((s, g) => s + g.pricing.merchantNetKobo, 0),
+      grossTotalNaira: 0,
+      platformFeeNaira: 0,
+      merchantNetNaira: 0,
+    };
+    pricing.grossTotalNaira = pricing.grossTotalKobo / 100;
+    pricing.platformFeeNaira = pricing.platformFeeKobo / 100;
+    pricing.merchantNetNaira = pricing.merchantNetKobo / 100;
+
+    // Step 4: MongoDB transaction — atomic across stock, order, fulfillment groups, ledger, audit
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-      // 4a. Atomically decrement stock with $gte guard — NEVER direct overwrite
+      // 4a. Atomically decrement stock with $gte guard — unchanged, already correct across multiple merchants
       for (const item of pricedItems) {
         const result = await Product.findOneAndUpdate(
           { _id: item.productId, stock: { $gte: item.quantity } },
@@ -165,49 +215,119 @@ export const checkout = async (req, res) => {
         }
       }
 
-      // 4b. Generate order reference
       const orderCount = await Order.countDocuments({}, { session });
-
-      // 4c. Create order document
+      const orderRef = generateOrderRef(orderState, orderCount + 1);
       const couponCode = fulfillmentCouponCode || cartItems?.[0]?.fulfillmentCouponCode || null;
-      const [order] = await Order.create([{
-        orderRef:        generateOrderRef(orderState, orderCount + 1),
-        buyerId:         req.userId,
-        merchantId,
-        items:           pricedItems,
-        grossTotalKobo:  pricing.grossTotalKobo,
-        platformFeeKobo: pricing.platformFeeKobo,
-        merchantNetKobo: pricing.merchantNetKobo,
-        status:          "PENDING",
-        escrowStatus:    "LOCKED",
-        riderOtpHash:    otpHash,   // bcrypt hash only — raw OTP never stored
-        shippingAddress,
-        assignedState:   orderState,
-        fulfillmentCouponCode: couponCode,
-        affiliateReferralCode: affiliateReferralCode || null,
-        timeline: [{
-          status: "PENDING", timestamp: new Date(),
-          actorId: req.userId, note: "Order created. Escrow locked.",
-        }],
-      }], { session });
+      const groupOtps = [];
+      let order;
 
-      // 4d. Append EscrowLedger LOCK entry
-      await EscrowLedger.create([{
-        orderId: order._id, entryType: "LOCK",
-        grossTotalKobo:  pricing.grossTotalKobo,
-        platformFeeKobo: pricing.platformFeeKobo,
-        merchantNetKobo: pricing.merchantNetKobo,
-        escrowStatus: "LOCKED", actorId: req.userId,
-        noteText: `Escrow locked for order ${order.orderRef}`,
-      }], { session });
+      if (!isMultiMerchant) {
+        const { rawOtp, otpHash } = await createOtpPair();
+        [order] = await Order.create([{
+          orderRef,
+          buyerId: req.userId,
+          merchantId: groupPricings[0].merchantId,
+          items: pricedItems,
+          grossTotalKobo: pricing.grossTotalKobo,
+          platformFeeKobo: pricing.platformFeeKobo,
+          merchantNetKobo: pricing.merchantNetKobo,
+          status: "PENDING",
+          escrowStatus: "LOCKED",
+          riderOtpHash: otpHash,
+          shippingAddress,
+          assignedState: orderState,
+          fulfillmentCouponCode: couponCode,
+          affiliateReferralCode: affiliateReferralCode || null,
+          timeline: [{ status: "PENDING", timestamp: new Date(), actorId: req.userId, note: "Order created. Escrow locked." }],
+        }], { session });
 
-      // 4e. Write InventoryAudit for each item
+        await EscrowLedger.create([{
+          orderId: order._id,
+          entryType: "LOCK",
+          grossTotalKobo: pricing.grossTotalKobo,
+          platformFeeKobo: pricing.platformFeeKobo,
+          merchantNetKobo: pricing.merchantNetKobo,
+          escrowStatus: "LOCKED",
+          actorId: req.userId,
+          noteText: `Escrow locked for order ${order.orderRef}`,
+        }], { session });
+
+        groupOtps.push({ fulfillmentGroupId: null, rawOtp });
+      } else {
+        [order] = await Order.create([{
+          orderRef,
+          buyerId: req.userId,
+          merchantId: groupPricings[0].merchantId,
+          items: pricedItems,
+          grossTotalKobo: pricing.grossTotalKobo,
+          platformFeeKobo: pricing.platformFeeKobo,
+          merchantNetKobo: pricing.merchantNetKobo,
+          status: "PENDING",
+          escrowStatus: "LOCKED",
+          shippingAddress,
+          assignedState: orderState,
+          fulfillmentCouponCode: couponCode,
+          affiliateReferralCode: affiliateReferralCode || null,
+          isMultiMerchant: true,
+          timeline: [{ status: "PENDING", timestamp: new Date(), actorId: req.userId, note: "Multi-party order created. Escrow locked per group." }],
+        }], { session });
+
+        const groupIds = [];
+        for (const group of groupPricings) {
+          const { rawOtp, otpHash } = await createOtpPair();
+          const [fg] = await FulfillmentGroup.create([{
+            orderId: order._id,
+            groupType: group.type,
+            merchantId: group.merchantId,
+            items: group.items.map((i) => group.type === "PRODUCT"
+              ? {
+                  productId: i.productId,
+                  productName: i.productName,
+                  quantity: i.quantity,
+                  unitPriceKobo: i.unitPriceKobo,
+                  subtotalKobo: i.subtotalKobo,
+                }
+              : {
+                  serviceType: i.serviceType,
+                  quantity: 1,
+                  unitPriceKobo: i.priceKobo,
+                  subtotalKobo: i.priceKobo,
+                }
+            ),
+            status: "PENDING",
+            escrowStatus: "LOCKED",
+            riderOtpHash: otpHash,
+          }], { session });
+
+          await EscrowLedger.create([{
+            orderId: order._id,
+            fulfillmentGroupId: fg._id,
+            entryType: "LOCK",
+            grossTotalKobo: group.pricing.grossTotalKobo,
+            platformFeeKobo: group.pricing.platformFeeKobo,
+            merchantNetKobo: group.pricing.merchantNetKobo,
+            escrowStatus: "LOCKED",
+            actorId: req.userId,
+            noteText: `Escrow locked for fulfillment group ${fg._id} (order ${order.orderRef})`,
+          }], { session });
+
+          groupIds.push(fg._id);
+          groupOtps.push({ fulfillmentGroupId: fg._id, groupType: group.type, rawOtp });
+        }
+
+        order.fulfillmentGroupIds = groupIds;
+        await order.save({ session });
+      }
+
       const audits = pricedItems.map((item) => ({
-        productId:   item.productId, actorId: req.userId,
-        deltaCount:  -item.quantity, reasonCode: "SALE",
+        productId: item.productId,
+        actorId: req.userId,
+        deltaCount: -item.quantity,
+        reasonCode: "SALE",
         stockBefore: productMap.get(item.productId.toString()).stock,
-        stockAfter:  productMap.get(item.productId.toString()).stock - item.quantity,
-        noteText:    `Deducted by order ${order.orderRef}`, orderId: order._id,
+        stockAfter: productMap.get(item.productId.toString()).stock - item.quantity,
+        noteText: `Deducted by order ${order.orderRef}`,
+        orderId: order._id,
       }));
       await InventoryAudit.create(audits, { session });
 
@@ -221,24 +341,27 @@ export const checkout = async (req, res) => {
 
       await session.commitTransaction();
 
-      // Clear cart (non-critical, outside transaction)
       await CartItem.deleteMany({ userId: req.userId });
 
-      // Notify merchant via SSE
-      notifyUser(merchantId.toString(), "order:status_changed", {
-        orderId: order._id, orderRef: order.orderRef,
-        newStatus: "PENDING", message: "New order received",
-      });
+      for (const group of groupPricings) {
+        notifyUser(group.merchantId.toString(), "order:status_changed", {
+          orderId: order._id,
+          orderRef: order.orderRef,
+          newStatus: "PENDING",
+          message: "New order received",
+        });
+      }
 
       return res.status(201).json({
-        success:          true,
-        orderId:          order._id,
-        orderRef:         order.orderRef,
-        rawOtp,           // ← Buyer sees this ONCE. Never stored in plain text.
-        grossTotalNaira:  pricing.grossTotalNaira,
+        success: true,
+        orderId: order._id,
+        orderRef: order.orderRef,
+        isMultiMerchant,
+        otps: groupOtps,
+        grossTotalNaira: pricing.grossTotalNaira,
         platformFeeNaira: pricing.platformFeeNaira,
         merchantNetNaira: pricing.merchantNetNaira,
-        message:          "Order placed. Funds locked in escrow.",
+        message: "Order placed. Funds locked in escrow.",
       });
     } catch (err) {
       await session.abortTransaction();
