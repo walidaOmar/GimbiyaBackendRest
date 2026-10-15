@@ -1,4 +1,6 @@
 import { FulfillmentGroup } from "../models/fulfillmentGroup.model.js";
+import { Order } from "../models/order.model.js";
+import { notifyUser } from "../utils/sseService.js";
 
 export const confirmFulfillmentGroup = async (req, res) => {
   try {
@@ -16,6 +18,14 @@ export const confirmFulfillmentGroup = async (req, res) => {
     group.confirmedAt = new Date();
     group.confirmedBy = req.userId;
     await group.save();
+
+    const order = await Order.findById(group.orderId).select("buyerId orderRef").lean();
+    if (order) {
+      notifyUser(String(order.buyerId), "fulfillment:confirmed", {
+        orderRef: order.orderRef,
+        message: "A merchant confirmed part of your order.",
+      });
+    }
 
     res.json({ success: true, data: group });
   } catch (error) {

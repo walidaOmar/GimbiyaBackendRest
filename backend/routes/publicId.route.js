@@ -13,7 +13,7 @@ router.use(verifyToken);
 router.get("/me", getMyPublicId);
 router.get(
   "/:publicId",
-  requireRole("developer_coordinator", "affiliate", "super_admin", "ceo"),
+  requireRole("developer_coordinator", "affiliate", "super_admin", "ceo", "support", "auditor"),
   lookupByPublicId
 );
 router.post(

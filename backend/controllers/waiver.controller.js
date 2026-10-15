@@ -5,6 +5,7 @@ import { WaiverRequest } from "../models/waiverRequest.model.js";
 import { FulfillmentCoupon } from "../models/fulfillmentCoupon.model.js";
 import { User } from "../models/user.model.js";
 import { googleSheetsService } from "../services/googleSheetsRuntime.js";
+import { notifyUser } from "../utils/sseService.js";
 
 function generateCouponCode() {
   return "FUL-" + crypto.randomBytes(3).toString("hex").toUpperCase();
@@ -232,6 +233,11 @@ export const approveWaiverRequest = async (req, res) => {
 
     await session.commitTransaction();
 
+    notifyUser(String(request.affiliateId), "waiver:approved", {
+      message: `Waiver approved. Coupon ${coupon[0].code} is valid for 6 hours.`,
+      code: coupon[0].code,
+    });
+
     res.status(200).json({
       success: true,
       message: "Waiver approved. Coupon generated.",
@@ -265,6 +271,10 @@ export const rejectWaiverRequest = async (req, res) => {
     request.reviewNote = reason;
     request.reviewedAt = new Date();
     await request.save();
+
+    notifyUser(String(request.affiliateId), "waiver:rejected", {
+      message: `Waiver request rejected: ${reason}`,
+    });
 
     res.status(200).json({ success: true, message: "Request rejected" });
   } catch (error) {

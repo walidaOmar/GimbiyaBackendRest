@@ -225,3 +225,32 @@ export const checkoutV2 = async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 };
+
+export const getCartV2 = async (req, res) => {
+  try {
+    const cart = await Cart.findOne({ userId: req.userId, status: "ACTIVE" }).lean();
+    if (!cart) return res.json({ success: true, data: { cart: null, items: [] } });
+
+    const items = await CartItem.find({ cartId: cart._id })
+      .populate("productId", "name priceKobo imageUrls stock isActive")
+      .lean();
+    res.json({ success: true, data: { cart, items } });
+  } catch (error) {
+    console.error("[getCartV2]", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const removeCartItemV2 = async (req, res) => {
+  try {
+    const item = await CartItem.findOneAndDelete({
+      _id: req.params.cartItemId,
+      userId: req.userId,
+    });
+    if (!item) return res.status(404).json({ success: false, message: "Cart item not found" });
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[removeCartItemV2]", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

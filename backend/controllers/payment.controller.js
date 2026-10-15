@@ -5,6 +5,7 @@ import { PaymentIntent } from "../models/paymentIntent.model.js";
 import { buildMonnifyPayload, getPlatformCommission } from "../utils/pricing.js";
 import { initiateTransaction, verifyTransactionStatus, verifyWebhookSignature } from "../services/monnifyService.js";
 import { writeAuditLog } from "../utils/auditLogger.js";
+import { notifyUser } from "../utils/sseService.js";
 
 export const initiatePayment = async (req, res) => {
   try {
@@ -119,6 +120,13 @@ export const handleMonnifyWebhook = async (req, res) => {
 
       if (order?.isMultiMerchant) {
         await FulfillmentGroup.updateMany({ orderId: order._id }, { status: "CONFIRMED" });
+      }
+
+      if (order) {
+        notifyUser(String(order.buyerId), "payment:confirmed", {
+          orderRef: order.orderRef,
+          message: `Payment confirmed for ${order.orderRef}.`,
+        });
       }
 
       await writeAuditLog({

@@ -26,6 +26,7 @@ import deliveryV2Routes from "./routes/deliveryV2.route.js";
 import paymentRoutes from "./routes/payment.route.js";
 import relationshipRoutes from "./routes/relationship.route.js";
 import serviceCatalogRoutes from "./routes/serviceCatalog.route.js";
+import regionRoutes from "./routes/region.route.js";
 
 import cron from "node-cron";
 import { handleSSEConnection } from "./utils/sseService.js";
@@ -119,6 +120,7 @@ app.use("/api/delivery-v2", deliveryV2Routes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/relationships", relationshipRoutes);
 app.use("/api/service-catalog", serviceCatalogRoutes);
+app.use("/api/regions", regionRoutes);
 
 app.get("/api/events/subscribe", verifyToken, handleSSEConnection);
 
