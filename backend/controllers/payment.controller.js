@@ -21,6 +21,12 @@ export const initiatePayment = async (req, res) => {
     if (String(order.buyerId) !== String(req.userId)) {
       return res.status(403).json({ success: false, message: "Not your order" });
     }
+    if (!["PENDING", "AWAITING_FULFILLMENT_PAYMENT"].includes(order.status)) {
+      return res.status(409).json({ success: false, message: `Cannot pay for a ${order.status} order` });
+    }
+    if (order.reservationExpiresAt && order.reservationExpiresAt <= new Date()) {
+      return res.status(409).json({ success: false, message: "This order's stock reservation has expired. Please place a new order." });
+    }
 
     const buyer = await User.findById(req.userId).select("name email");
     const pricing = {
@@ -112,30 +118,66 @@ export const handleMonnifyWebhook = async (req, res) => {
       intent.rawWebhookPayload = event;
       await intent.save();
 
-      const order = await Order.findByIdAndUpdate(
-        intent.orderId,
+      let order = await Order.findOneAndUpdate(
+        {
+          _id: intent.orderId,
+          status: { $in: ["PENDING", "AWAITING_FULFILLMENT_PAYMENT"] },
+          $or: [
+            { reservationExpiresAt: null },
+            { reservationExpiresAt: { $gt: new Date() } },
+          ],
+        },
         { status: "CONFIRMED", monnifyPaymentRef: transactionReference, paidAt: new Date() },
         { new: true }
       );
+      const newlyConfirmed = Boolean(order);
 
-      if (order?.isMultiMerchant) {
-        await FulfillmentGroup.updateMany({ orderId: order._id }, { status: "CONFIRMED" });
+      if (!order) {
+        order = await Order.findById(intent.orderId);
+        if (order?.status === "CANCELLED") {
+          console.error(`[handleMonnifyWebhook] REFUND REQUIRED: payment ${transactionReference} arrived for CANCELLED order ${intent.orderId}`);
+          return res.status(200).json({ success: true });
+        }
+        if (order?.reservationExpiresAt && order.reservationExpiresAt <= new Date()) {
+          console.error(`[handleMonnifyWebhook] REFUND REQUIRED: payment ${transactionReference} arrived after stock reservation expired for order ${intent.orderId}`);
+          return res.status(200).json({ success: true });
+        }
+        if (order?.status !== "CONFIRMED" || order.monnifyPaymentRef !== transactionReference) {
+          return res.status(200).json({ success: true });
+        }
       }
 
-      if (order) {
+      if (order.isMultiMerchant) {
+        await FulfillmentGroup.updateMany(
+          { orderId: order._id, status: "PENDING" },
+          { status: "PAID" }
+        );
+        if (newlyConfirmed) {
+          const groups = await FulfillmentGroup.find({ orderId: order._id }).select("merchantId").lean();
+          for (const group of groups) {
+            notifyUser(String(group.merchantId), "fulfillment:status_changed", {
+              orderRef: order.orderRef,
+              newStatus: "PAID",
+              message: `Order ${order.orderRef} is paid. Confirm it to release it for pickup.`,
+            });
+          }
+        }
+      }
+
+      if (newlyConfirmed) {
         notifyUser(String(order.buyerId), "payment:confirmed", {
           orderRef: order.orderRef,
           message: `Payment confirmed for ${order.orderRef}.`,
         });
-      }
 
-      await writeAuditLog({
-        action: "PAYMENT_CAPTURED",
-        performedBy: order.buyerId,
-        targetType: "Order",
-        targetId: order._id,
-        newValue: { status: "CONFIRMED" },
-      });
+        await writeAuditLog({
+          action: "PAYMENT_CAPTURED",
+          performedBy: order.buyerId,
+          targetType: "Order",
+          targetId: order._id,
+          newValue: { status: "CONFIRMED" },
+        });
+      }
     } else if (verified.paymentStatus === "FAILED") {
       intent.status = "FAILED";
       await intent.save();

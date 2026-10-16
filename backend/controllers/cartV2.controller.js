@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Cart, CartItem } from "../models/cart.model.js";
 import { Product } from "../models/product.model.js";
 import { ServiceOffering } from "../models/serviceOffering.model.js";
@@ -9,6 +10,25 @@ const getOrCreateCart = async (userId) => {
   let cart = await Cart.findOne({ userId, status: "ACTIVE" });
   if (!cart) cart = await Cart.create({ userId, status: "ACTIVE" });
   return cart;
+};
+
+const getReservationMinutes = () => Number(process.env.UNPAID_HOLD_MINUTES || 30);
+
+const reserveStock = async (items, session) => {
+  for (const item of items) {
+    if (!item.productId) {
+      throw new Error("A product in your cart is no longer available. Refresh your cart and try again.");
+    }
+
+    const updated = await Product.findOneAndUpdate(
+      { _id: item.productId._id, isActive: true, stock: { $gte: item.quantity } },
+      { $inc: { stock: -item.quantity, soldCount: item.quantity } },
+      { new: true, session }
+    );
+    if (!updated) {
+      throw new Error(`"${item.productId.name}" is out of stock or no longer available. Reduce the quantity or remove it.`);
+    }
+  }
 };
 
 export const addToCartV2 = async (req, res) => {
@@ -102,23 +122,37 @@ export const removeServiceFromCartItem = async (req, res) => {
 };
 
 export const checkoutV2 = async (req, res) => {
+  let session;
   try {
+    const reservationMinutes = getReservationMinutes();
+    if (!Number.isFinite(reservationMinutes) || reservationMinutes <= 0) {
+      throw new Error("UNPAID_HOLD_MINUTES must be a positive number");
+    }
+
+    session = await mongoose.startSession();
+    session.startTransaction();
+
     const { shippingAddress, assignedState } = req.body;
 
-    const cart = await Cart.findOne({ userId: req.userId, status: "ACTIVE" });
+    const cart = await Cart.findOne({ userId: req.userId, status: "ACTIVE" }).session(session);
     if (!cart) {
+      await session.abortTransaction();
       return res.status(400).json({ success: false, message: "No active cart" });
     }
 
-    const items = await CartItem.find({ cartId: cart._id }).populate("productId");
+    const items = await CartItem.find({ cartId: cart._id }).populate("productId").session(session);
     if (items.length === 0) {
+      await session.abortTransaction();
       return res.status(400).json({ success: false, message: "Cart is empty" });
     }
 
     const byMerchant = new Map();
     for (const item of items) {
-      const key = String(item.merchantId || item.productId?.merchantId);
-      if (!key) continue;
+      const merchantId = item.merchantId || item.productId?.merchantId;
+      if (!merchantId) {
+        throw new Error(`"${item.productId?.name || "A product"}" has no merchant assigned and cannot be checked out.`);
+      }
+      const key = String(merchantId);
       if (!byMerchant.has(key)) byMerchant.set(key, []);
       byMerchant.get(key).push(item);
     }
@@ -131,14 +165,19 @@ export const checkoutV2 = async (req, res) => {
         byServiceProvider.get(key).push({ ...service.toObject ? service.toObject() : service, parentProductName: item.productId?.name || null });
       }
     }
+    if (byMerchant.size + byServiceProvider.size === 0) {
+      throw new Error("Your cart has no items available for checkout.");
+    }
 
-    const isMultiMerchant = byMerchant.size > 1 || byServiceProvider.size > 0;
+    const isMultiMerchant = true;
     const grossTotalKobo = items.reduce(
       (sum, item) => sum + ((item.priceSnapshot ?? item.productId?.priceKobo ?? 0) * item.quantity) + (item.serviceItems || []).reduce((svcSum, service) => svcSum + (service.priceSnapshot || 0), 0),
       0
     );
 
-    const order = await Order.create({
+    await reserveStock(items, session);
+
+    const [order] = await Order.create([{
       orderRef: `GM-${assignedState?.slice(0, 2).toUpperCase() || "XX"}-${Date.now()}`,
       buyerId: req.userId,
       merchantId: items[0].merchantId || items[0].productId?.merchantId,
@@ -157,14 +196,15 @@ export const checkoutV2 = async (req, res) => {
       shippingAddress,
       assignedState,
       isMultiMerchant,
-    });
+      reservationExpiresAt: new Date(Date.now() + reservationMinutes * 60 * 1000),
+    }], { session });
 
     const groupIds = [];
     const groupOtpSummary = [];
 
     for (const [merchantId, merchantItems] of byMerchant) {
       const { rawOtp, otpHash } = await createOtpPair();
-      const group = await FulfillmentGroup.create({
+      const [group] = await FulfillmentGroup.create([{
         orderId: order._id,
         groupType: "PRODUCT",
         merchantId,
@@ -178,18 +218,19 @@ export const checkoutV2 = async (req, res) => {
         status: "PENDING",
         escrowStatus: "LOCKED",
         riderOtpHash: otpHash,
-      });
+      }], { session });
       groupIds.push(group._id);
       groupOtpSummary.push({ fulfillmentGroupId: group._id, merchantId, groupType: "PRODUCT", rawOtp });
       await CartItem.updateMany(
         { _id: { $in: merchantItems.map((item) => item._id) } },
-        { fulfillmentGroupId: group._id }
+        { fulfillmentGroupId: group._id },
+        { session }
       );
     }
 
     for (const [serviceProviderId, services] of byServiceProvider) {
       const { rawOtp, otpHash } = await createOtpPair();
-      const group = await FulfillmentGroup.create({
+      const [group] = await FulfillmentGroup.create([{
         orderId: order._id,
         groupType: "SERVICE",
         merchantId: serviceProviderId,
@@ -202,16 +243,17 @@ export const checkoutV2 = async (req, res) => {
         status: "PENDING",
         escrowStatus: "LOCKED",
         riderOtpHash: otpHash,
-      });
+      }], { session });
       groupIds.push(group._id);
       groupOtpSummary.push({ fulfillmentGroupId: group._id, merchantId: serviceProviderId, groupType: "SERVICE", rawOtp });
     }
 
     order.fulfillmentGroupIds = groupIds;
-    await order.save();
+    await order.save({ session });
 
     cart.status = "CHECKED_OUT";
-    await cart.save();
+    await cart.save({ session });
+    await session.commitTransaction();
 
     res.json({
       success: true,
@@ -222,7 +264,17 @@ export const checkoutV2 = async (req, res) => {
       },
     });
   } catch (error) {
+    if (session?.inTransaction()) {
+      try {
+        await session.abortTransaction();
+      } catch (abortError) {
+        console.error("[checkoutV2] transaction rollback failed", abortError);
+      }
+    }
+    console.error("[checkoutV2]", error);
     res.status(400).json({ success: false, message: error.message });
+  } finally {
+    await session?.endSession();
   }
 };
 

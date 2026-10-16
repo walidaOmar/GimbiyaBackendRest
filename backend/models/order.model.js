@@ -52,6 +52,7 @@ const orderSchema = new mongoose.Schema(
     affiliateReferralCode: { type: String, default: null },
     paymentMethod: { type: String, default: null },
     paidAt: { type: Date, default: null },
+    reservationExpiresAt: { type: Date, default: null, index: true },
 
     timeline: [timelineSchema],
   },

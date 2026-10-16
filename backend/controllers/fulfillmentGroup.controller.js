@@ -6,18 +6,23 @@ export const confirmFulfillmentGroup = async (req, res) => {
   try {
     const { groupId } = req.params;
 
-    const group = await FulfillmentGroup.findById(groupId);
-    if (!group) {
-      return res.status(404).json({ success: false, message: "Fulfillment group not found" });
-    }
-    if (String(group.merchantId) !== String(req.userId)) {
-      return res.status(403).json({ success: false, message: "Not your fulfillment group" });
-    }
+    const group = await FulfillmentGroup.findOneAndUpdate(
+      { _id: groupId, merchantId: req.userId, status: "PAID" },
+      { $set: { status: "CONFIRMED", confirmedAt: new Date(), confirmedBy: req.userId } },
+      { new: true }
+    );
 
-    group.status = "CONFIRMED";
-    group.confirmedAt = new Date();
-    group.confirmedBy = req.userId;
-    await group.save();
+    if (!group) {
+      const existing = await FulfillmentGroup.findById(groupId).select("merchantId status");
+      if (!existing) return res.status(404).json({ success: false, message: "Fulfillment group not found" });
+      if (String(existing.merchantId) !== String(req.userId)) {
+        return res.status(403).json({ success: false, message: "Not your fulfillment group" });
+      }
+      const message = existing.status === "PENDING"
+        ? "The customer has not paid for this order yet. You can confirm it once payment is received."
+        : `This group is already ${existing.status} and cannot be confirmed.`;
+      return res.status(409).json({ success: false, message });
+    }
 
     const order = await Order.findById(group.orderId).select("buyerId orderRef").lean();
     if (order) {

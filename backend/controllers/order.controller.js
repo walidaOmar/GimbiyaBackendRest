@@ -405,39 +405,77 @@ export const getOrderHistory = async (req, res) => {
 
 // ── CANCEL ORDER ──────────────────────────────────────────────────────────────
 export const bulkFulfillmentPayment = async (req, res) => {
+  let session;
   try {
     const { couponCode } = req.body;
+    if (typeof couponCode !== "string" || !couponCode.trim()) {
+      return res.status(400).json({ success: false, message: "Coupon code is required" });
+    }
     const userId = req.userId;
 
-    const coupon = await FulfillmentCoupon.findOne({ code: couponCode.toUpperCase() });
-    if (!coupon) return res.status(404).json({ success: false, message: "Coupon not found" });
+    session = await mongoose.startSession();
+    session.startTransaction();
+
+    const coupon = await FulfillmentCoupon.findOne({ code: couponCode.toUpperCase() }).session(session);
+    if (!coupon) {
+      await session.abortTransaction();
+      return res.status(404).json({ success: false, message: "Coupon not found" });
+    }
 
     const isAuthorized = coupon.affiliateId.toString() === userId || req.userRole === "super_admin";
-    if (!isAuthorized) return res.status(403).json({ success: false, message: "Not authorized to pay for this coupon" });
+    if (!isAuthorized) {
+      await session.abortTransaction();
+      return res.status(403).json({ success: false, message: "Not authorized to pay for this coupon" });
+    }
 
     const orders = await Order.find({
       fulfillmentCouponCode: couponCode.toUpperCase(),
       status: { $in: ["PENDING", "AWAITING_FULFILLMENT_PAYMENT"] },
-    });
+      $or: [
+        { reservationExpiresAt: null },
+        { reservationExpiresAt: { $gt: new Date() } },
+      ],
+    }).session(session);
 
     if (!orders.length) {
+      await session.abortTransaction();
       return res.status(400).json({ success: false, message: "No pending orders for this coupon" });
     }
 
     const totalKobo = orders.reduce((sum, order) => sum + (order.grossTotalKobo || 0), 0);
 
     if (coupon.budgetKobo > 0 && coupon.remainingBudgetKobo < totalKobo) {
+      await session.abortTransaction();
       return res.status(400).json({
         success: false,
         message: `Insufficient coupon budget. Need ₦${(totalKobo / 100).toLocaleString()}, have ₦${(coupon.remainingBudgetKobo / 100).toLocaleString()}`,
       });
     }
 
+    const notifications = [];
     for (const order of orders) {
       order.status = "PAID";
       order.paymentMethod = "FULFILLMENT_COUPON";
       order.paidAt = new Date();
-      await order.save();
+      await order.save({ session });
+      if (order.isMultiMerchant) {
+        const groups = await FulfillmentGroup.find({
+          orderId: order._id,
+          status: "PENDING",
+        }).select("merchantId").session(session);
+        await FulfillmentGroup.updateMany(
+          { orderId: order._id, status: "PENDING" },
+          { status: "PAID" },
+          { session }
+        );
+        for (const group of groups) {
+          notifications.push([String(group.merchantId), {
+            orderRef: order.orderRef,
+            newStatus: "PAID",
+            message: `Order ${order.orderRef} is paid. Confirm it to release it for pickup.`,
+          }]);
+        }
+      }
 
       const claim = coupon.claimedBy.find((entry) => entry.userId?.toString() === order.buyerId.toString());
       if (claim) claim.orderId = order._id;
@@ -446,7 +484,12 @@ export const bulkFulfillmentPayment = async (req, res) => {
     if (coupon.budgetKobo > 0) {
       coupon.usedBudgetKobo += totalKobo;
     }
-    await coupon.save();
+    await coupon.save({ session });
+    await session.commitTransaction();
+
+    for (const [merchantId, payload] of notifications) {
+      notifyUser(merchantId, "fulfillment:status_changed", payload);
+    }
 
     res.status(200).json({
       success: true,
@@ -455,8 +498,17 @@ export const bulkFulfillmentPayment = async (req, res) => {
       totalKobo,
     });
   } catch (error) {
+    if (session?.inTransaction()) {
+      try {
+        await session.abortTransaction();
+      } catch (abortError) {
+        console.error("[bulkFulfillmentPayment] transaction rollback failed", abortError);
+      }
+    }
     console.error("[bulkFulfillmentPayment]", error);
     res.status(500).json({ success: false, message: error.message });
+  } finally {
+    await session?.endSession();
   }
 };
 
@@ -493,20 +545,29 @@ export const getOrdersByCoupon = async (req, res) => {
 export const cancelOrder = async (req, res) => {
   const { reason } = req.body;
   try {
-    const order = await Order.findOne({ _id: req.params.id, buyerId: req.userId });
-    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
-    if (!["PENDING", "CONFIRMED"].includes(order.status)) {
-      return res.status(400).json({ success: false, message: `Cannot cancel a ${order.status} order` });
-    }
-
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
+      const order = await Order.findOne({ _id: req.params.id, buyerId: req.userId }).session(session);
+      if (!order) {
+        await session.abortTransaction();
+        return res.status(404).json({ success: false, message: "Order not found" });
+      }
+      if (!["PENDING", "CONFIRMED"].includes(order.status)) {
+        await session.abortTransaction();
+        return res.status(400).json({ success: false, message: `Cannot cancel a ${order.status} order` });
+      }
+
       for (const item of order.items) {
         await Product.findByIdAndUpdate(item.productId, {
           $inc: { stock: item.quantity, soldCount: -item.quantity },
         }, { session });
       }
+      await FulfillmentGroup.updateMany(
+        { orderId: order._id, status: { $in: ["PENDING", "PAID", "CONFIRMED"] } },
+        { status: "CANCELLED", escrowStatus: "REFUNDED" },
+        { session }
+      );
       order.status       = "CANCELLED";
       order.escrowStatus = "REFUNDED";
       order.timeline.push({ status: "CANCELLED", timestamp: new Date(), actorId: req.userId, note: reason || "Cancelled by buyer" });

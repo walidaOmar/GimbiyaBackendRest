@@ -8,19 +8,28 @@ import {
   sendPasswordResetEmail,
   sendResetSuccessEmail,
 } from "../mailtrap/emails.js";
-import { User } from "../models/user.model.js";
+import { User, NIGERIAN_STATES } from "../models/user.model.js";
 
 // ── SIGNUP ────────────────────────────────────────────────────────────────────
-// Taken from MERN starter, extended with role + assignedState + phone
+// Public signup is limited to consumer accounts; elevated roles are provisioned internally.
+const SIGNUP_NODES = NIGERIAN_STATES.filter((state) => state !== "Global");
+
 export const signup = async (req, res) => {
-  const { email, password, name, phone, role, assignedState } = req.body;
+  const { email, password, name, phone, assignedState } = req.body;
 
   try {
-    if (!email || !password || !name) {
+    if (typeof email !== "string" || typeof password !== "string" || typeof name !== "string" || !email.trim() || !password || !name.trim()) {
       return res.status(400).json({ success: false, message: "Name, email, and password are required" });
     }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+    }
+    if (assignedState && (typeof assignedState !== "string" || !SIGNUP_NODES.includes(assignedState))) {
+      return res.status(400).json({ success: false, message: "Please choose a valid market" });
+    }
 
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = email.toLowerCase().trim();
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({ success: false, message: "An account with this email already exists" });
     }
@@ -29,12 +38,12 @@ export const signup = async (req, res) => {
     const verificationToken   = Math.floor(100000 + Math.random() * 900000).toString();
 
     const user = new User({
-      email:                        email.toLowerCase(),
+      email:                        normalizedEmail,
       password:                     hashedPassword,
       name,
       phone:                        phone || "",
-      role:                         role || "buyer",
-      assignedState:                assignedState || "Ado bayero mall",
+      role:                         "buyer",
+      assignedState:                assignedState || SIGNUP_NODES[0],
       verificationToken,
       verificationTokenExpiresAt:   Date.now() + 24 * 60 * 60 * 1000, // 24 hours
     });
