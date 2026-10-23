@@ -12,16 +12,20 @@
  *   3. Net    = Gross - Fee                  → merchant payout
  */
 
+import { getRevenueConfig } from "./revenueCache.js";
+import { resolveRate } from "../policy/pricing.v1.js";
+
+// commissionPct here is only the DEFAULT. Live rates come from the HQ Revenue Architecture
+// (utils/revenueCache.js, loaded from the database).
 export const REGIONS = [
-  { id: "Ado bayero mall", label: "Ado Bayero Mall", shortCode: "ABJ", commissionPct: 5.5 },
-  { id: "Tafawa balewa refinery", label: "Tafawa Balewa Refinery", shortCode: "KN", commissionPct: 5.0 },
-  { id: "Sardauna market", label: "Sardauna Market", shortCode: "KD", commissionPct: 4.5 },
+  { id: "Ado bayero mall", label: "Ado Bayero Mall", shortCode: "KN", commissionPct: 5.5 },       // Kano
+  { id: "Tafawa balewa refinery", label: "Tafawa Balewa Refinery", shortCode: "ABJ", commissionPct: 5.0 }, // Abuja
+  { id: "Sardauna market", label: "Sardauna Market", shortCode: "KD", commissionPct: 4.5 },       // Kaduna
 ];
 
-export function getPlatformCommission(state, floor) {
-  if (floor === "LEVEL_2" || floor === 2) return 3.0;
-  const region = REGIONS.find((r) => r.id === state);
-  return region ? region.commissionPct : 5.0;
+/** Platform commission % for a sale. The winning rule order comes from the HQ Revenue Architecture (D26). */
+export function getPlatformCommission(state, floor, marketTier) {
+  return resolveRate(getRevenueConfig(), { node: state, floor, marketTier }).pct;
 }
 
 export function getRegionLabel(stateId) {
@@ -110,10 +114,8 @@ export function buildMonnifyPayload(pricing, orderRef, merchantSubAccountCodeOrS
       ? merchantSubAccountCodeOrSplits
       : [];
 
-  if (splitList.length === 0) {
-    throw new Error("Monnify payload requires at least one split entry");
-  }
-
+  // Collect-all design: when no splits are passed the whole amount lands in the platform's Monnify
+  // wallet and merchants are paid from the internal wallet ledger after OTP release.
   return {
     amount: pricing.grossTotalNaira,
     customerName,
@@ -124,12 +126,16 @@ export function buildMonnifyPayload(pricing, orderRef, merchantSubAccountCodeOrS
     contractCode: process.env.MONNIFY_CONTRACT_CODE || "",
     redirectUrl: `${process.env.CLIENT_URL}/orders/${orderRef}/status`,
     paymentMethods: [paymentMethod || "ACCOUNT_TRANSFER"],
-    incomeSplitConfig: splitList.map((split) => ({
-      subAccountCode: split.subAccountCode,
-      feePercentage: parseFloat(((split.splitAmountKobo / pricing.grossTotalKobo) * 100).toFixed(4)),
-      splitAmount: split.splitAmountNaira,
-      feeBearer: false,
-    })),
+    ...(splitList.length
+      ? {
+          incomeSplitConfig: splitList.map((split) => ({
+            subAccountCode: split.subAccountCode,
+            feePercentage: parseFloat(((split.splitAmountKobo / pricing.grossTotalKobo) * 100).toFixed(4)),
+            splitAmount: split.splitAmountNaira,
+            feeBearer: false,
+          })),
+        }
+      : {}),
   };
 }
 

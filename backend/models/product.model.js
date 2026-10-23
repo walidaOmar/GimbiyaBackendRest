@@ -11,6 +11,13 @@ const productSchema = new mongoose.Schema(
       validate: { validator: Number.isInteger, message: "priceKobo must be an integer" },
     },
 
+    // The merchant sets basePriceKobo; priceKobo (what customers pay) = base + the platform commission at listing time.
+    basePriceKobo:  { type: Number, default: null, min: 1, validate: { validator: (v) => v === null || Number.isInteger(v), message: "basePriceKobo must be an integer" } },
+    commissionPct:  { type: Number, default: null }, // rate snapshot used to compute priceKobo (audit trail)
+    lastPriceEditAt:{ type: Date, default: null },
+    unit:           { type: String, default: "piece", trim: true },
+    wholesaleOnly:  { type: Boolean, default: false },
+
     // MANDATE: stock modified ONLY via $inc — never direct overwrite
     stock: {
       type: Number, required: true, min: 0,

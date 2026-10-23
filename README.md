@@ -106,6 +106,46 @@ npm run dev
 | GET | `/campaigns` | Affiliate | My campaigns |
 | GET | `/analytics` | Affiliate | Summary + per-campaign stats |
 
+### Marketplace V2 (`/api/cart-v2`)
+| Method | Route | Auth | Notes |
+|--------|-------|------|-------|
+| GET | `/quote` | JWT | Server-priced cart quote; optional `?ref=CODE` |
+| POST | `/items` | JWT | `{ productId, quantity }` |
+| POST | `/checkout` | JWT | `{ shippingAddress, affiliateReferralCode? }` |
+| GET | `/orders` | JWT | Buyer's V2 order history |
+| GET | `/orders/:orderRef` | JWT | Order details and handover codes |
+| POST | `/orders/:orderRef/cancel` | JWT | Cancel an unpaid order |
+| POST | `/fulfillment-groups/:groupId/confirm` | Merchant | Confirm a paid fulfillment group |
+| POST | `/service-jobs/complete` | Merchant | Complete a service with its handover code |
+
+### Invites (`/api/invites`)
+| Method | Route | Auth | Notes |
+|--------|-------|------|-------|
+| POST | `/` | Inviter role | Create a role- and business-type-limited invitation |
+| GET | `/` | Inviter role | List invitations |
+| GET | `/public/:token` | Public | Preview an invitation |
+| POST | `/public/:token/accept` | Public | Accept an invitation |
+| GET | `/merchants/pending`, `/merchants/:storeId/verify` | HQ/coordinator | Review and verify invited merchants |
+
+### Wallet, subscriptions, revenue, and performance
+| Base route | Auth | Purpose |
+|------------|------|---------|
+| `/api/wallet` | JWT | Wallet balance, bank lookup, and withdrawal requests |
+| `/api/wallet/admin/*` | HQ/auditor | Withdrawal review and platform wallet summary |
+| `/api/subscriptions` | Business owner/HQ | Store plan status, checkout, and HQ plan changes |
+| `/api/revenue` | HQ/coordinator/auditor | Read revenue configuration; HQ publishes changes |
+| `/api/performance` | Coordinator/HQ/auditor | Affiliate performance and store referral attribution |
+
+Optional configuration: `OTP_ENC_KEY` (32+ random characters; defaults to a key derived from `JWT_SECRET`), `UNPAID_HOLD_MINUTES` (default 30), `MONNIFY_TRANSFERS_ENABLED` (enable only after Monnify approves transfers), and `MONNIFY_WALLET_ACCOUNT_NUMBER` (required for automated withdrawals). Keep payment credentials in deployment environment settings, never in source control.
+
+### Initial commercial data
+After deployment, run these from the repository root in an environment with `MONGODB_URI` configured. Set a strong pilot password rather than committing it:
+
+```bash
+node backend/scripts/seedCommercialNodes.js
+SEED_ALLOW=yes SEED_PASSWORD='choose-a-strong-password' node backend/scripts/seedPilot.js
+```
+
 ### SSE (`/api/events/subscribe`)
 Connect with `Authorization: Bearer {jwt}` header.
 
@@ -121,9 +161,10 @@ Connect with `Authorization: Bearer {jwt}` header.
 
 1. **Stock:** ALWAYS `$inc`. NEVER `product.stock = x`
 2. **Money:** ALWAYS Kobo integers. NEVER Naira floats stored in DB
-3. **OTP:** `rawOtp` returned to buyer once, NEVER stored. Only `bcrypt(rawOtp)` in DB
+3. **OTP:** never store a raw handover code. Store its bcrypt hash; the buyer-facing copy is AES-GCM encrypted and available only to the buyer.
 4. **State boundary:** `assignedState` always from `req.userState` (session), never from request body
-5. **Ledgers:** `EscrowLedger` + `InventoryAudit` — INSERT only, no UPDATE/DELETE ever
+5. **Ledgers:** `EscrowLedger`, `InventoryAudit`, and wallet entries are append-only; never update or delete ledger rows.
+6. **Payouts:** customer payments are collected by Gimbiya; seller, rider, affiliate, and platform wallet entries are credited after the handover code is accepted.
 
 ## Roles
 | Role | Value |

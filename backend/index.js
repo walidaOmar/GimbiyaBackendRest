@@ -27,16 +27,32 @@ import paymentRoutes from "./routes/payment.route.js";
 import relationshipRoutes from "./routes/relationship.route.js";
 import serviceCatalogRoutes from "./routes/serviceCatalog.route.js";
 import regionRoutes from "./routes/region.route.js";
+import revenueRoutes from "./routes/revenue.route.js";
+import inviteRoutes from "./routes/invite.route.js";
+import performanceRoutes from "./routes/performance.route.js";
+import walletRoutes from "./routes/wallet.route.js";
+import subscriptionRoutes from "./routes/subscription.route.js";
 
 import cron from "node-cron";
 import { handleSSEConnection } from "./utils/sseService.js";
 import { verifyToken } from "./middleware/verifyToken.js";
+import { securityHeaders } from "./middleware/securityHeaders.js";
+import { apiLimiter } from "./middleware/rateLimiter.js";
+import { assertEnv } from "./utils/envGuard.js";
+import { loadRevenueConfig } from "./services/revenueConfig.service.js";
 import { runWaiverExpiryCheck } from "./jobs/waiverExpiryJob.js";
 import { runRetentionStatusCheck } from "./jobs/retentionStatusJob.js";
+import { runUnpaidRelease } from "./jobs/releaseUnpaidJob.js";
 
 dotenv.config();
+assertEnv();
 
 const app = express();
+// Render/Railway sit behind a proxy. Without this every visitor shares the proxy's IP,
+// so the rate limiters would count all users together.
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+app.use(securityHeaders);
 const PORT = process.env.PORT || 8080;
 const isProduction = process.env.NODE_ENV === "production";
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:3000")
@@ -101,6 +117,7 @@ app.get("/health", (req, res) => {
   res.json({ status: "GIMBIYA MALL BACKEND ONLINE", version: "2.0.0" });
 });
 
+app.use("/api", apiLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/products", productRoutes);
@@ -121,6 +138,11 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/relationships", relationshipRoutes);
 app.use("/api/service-catalog", serviceCatalogRoutes);
 app.use("/api/regions", regionRoutes);
+app.use("/api/revenue", revenueRoutes);
+app.use("/api/invites", inviteRoutes);
+app.use("/api/performance", performanceRoutes);
+app.use("/api/wallet", walletRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
 
 app.get("/api/events/subscribe", verifyToken, handleSSEConnection);
 
@@ -144,9 +166,12 @@ async function bootstrap() {
   await connectDB();
   await connectRedis();
   initFirebase();
+  await loadRevenueConfig();
+  setInterval(() => loadRevenueConfig().catch((e) => console.error("[revenue] refresh failed:", e.message)), 60 * 1000).unref();
 
   cron.schedule("*/10 * * * *", runWaiverExpiryCheck);
   cron.schedule("0 * * * *", runRetentionStatusCheck);
+  cron.schedule("*/5 * * * *", () => runUnpaidRelease().catch((e) => console.error("[unpaid-release]", e.message)));
 
   app.listen(PORT, () => {
     console.log("\n╔══════════════════════════════════════════════╗");

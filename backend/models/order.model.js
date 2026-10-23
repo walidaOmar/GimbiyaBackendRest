@@ -44,14 +44,21 @@ const orderSchema = new mongoose.Schema(
     // SECURITY: raw OTP never stored — only bcrypt hash
     riderOtpHash:         { type: String, default: null, select: false }, // select:false = NEVER returned by default
     signatureStoragePath: { type: String, default: null },
+    otpAttempts:          { type: Number, default: 0 },
+    otpLockedUntil:       { type: Date, default: null },
 
     shippingAddress:   { type: String, required: true },
     assignedState:     { type: String, enum: ["Ado bayero mall", "Tafawa balewa refinery", "Sardauna market"], required: true, index: true },
     monnifyPaymentRef: { type: String, default: null },
     fulfillmentCouponCode: { type: String, default: null },
     affiliateReferralCode: { type: String, default: null },
+    affiliateId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, index: true }, // resolved from the code at checkout, immutable
+    deliveryFeeKobo: { type: Number, default: 0, min: 0 },
+    commissionPoolKobo: { type: Number, default: 0, min: 0 },
+    revenueConfigVersion: { type: Number, default: null }, // which HQ rates priced this order
     paymentMethod: { type: String, default: null },
     paidAt: { type: Date, default: null },
+    reservationExpiresAt: { type: Date, default: null, index: true }, // stock held until this time if unpaid (Cart V2)
     reservationExpiresAt: { type: Date, default: null, index: true },
 
     timeline: [timelineSchema],

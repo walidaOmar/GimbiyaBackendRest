@@ -48,6 +48,15 @@ export const getCart = async (req, res) => {
   }
 };
 
+// Marks the buyer's cart items covered by a coupon. If HQ restricted the coupon to certain
+// products, only those items are marked.
+async function markCartForCoupon(userId, coupon) {
+  const filter = { userId };
+  if (coupon.eligibleProductIds?.length) filter.productId = { $in: coupon.eligibleProductIds };
+  const result = await CartItem.updateMany(filter, { fulfillmentCouponCode: coupon.code });
+  return result.matchedCount ?? result.n ?? 0;
+}
+
 export const applyFulfillmentCoupon = async (req, res) => {
   try {
     const { code } = req.body;
@@ -63,9 +72,13 @@ export const applyFulfillmentCoupon = async (req, res) => {
       return res.status(403).json({ success: false, message: "This fulfillment code was not issued for your account" });
     }
 
+    const restricted = coupon.eligibleProductIds?.length > 0;
+    const notCovered = "None of the items in your cart are covered by this fulfillment code. Add an eligible product first.";
+
     const alreadyClaimed = coupon.claimedBy.find((entry) => entry.userId?.toString() === userId);
     if (alreadyClaimed) {
-      await CartItem.updateMany({ userId }, { fulfillmentCouponCode: coupon.code });
+      const covered = await markCartForCoupon(userId, coupon);
+      if (restricted && covered === 0) return res.status(400).json({ success: false, message: notCovered });
       return res.status(200).json({ success: true, message: "Coupon re-applied", coupon: { code: coupon.code } });
     }
 
@@ -73,16 +86,24 @@ export const applyFulfillmentCoupon = async (req, res) => {
       return res.status(400).json({ success: false, message: "All slots claimed" });
     }
 
+    // Do not spend a slot if nothing in the cart can use it.
+    if (restricted) {
+      const coveredCount = await CartItem.countDocuments({ userId, productId: { $in: coupon.eligibleProductIds } });
+      if (coveredCount === 0) return res.status(400).json({ success: false, message: notCovered });
+    }
+
     coupon.claimedBy.push({ userId, claimedAt: new Date() });
     coupon.usedSlots += 1;
     if (coupon.usedSlots >= coupon.totalSlots) coupon.status = "EXHAUSTED";
     await coupon.save();
 
-    await CartItem.updateMany({ userId }, { fulfillmentCouponCode: coupon.code });
+    await markCartForCoupon(userId, coupon);
 
     res.status(200).json({
       success: true,
-      message: "Coupon applied. Your cart is now covered by this fulfillment code.",
+      message: restricted
+        ? "Coupon applied to the eligible items in your cart."
+        : "Coupon applied. Your cart is now covered by this fulfillment code.",
       coupon: { code: coupon.code, remainingSlots: coupon.remainingSlots },
     });
   } catch (error) {
@@ -428,7 +449,7 @@ export const bulkFulfillmentPayment = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to pay for this coupon" });
     }
 
-    const orders = await Order.find({
+    const pending = await Order.find({
       fulfillmentCouponCode: couponCode.toUpperCase(),
       status: { $in: ["PENDING", "AWAITING_FULFILLMENT_PAYMENT"] },
       $or: [
@@ -437,9 +458,23 @@ export const bulkFulfillmentPayment = async (req, res) => {
       ],
     }).session(session);
 
+    // HQ product list: an order is only payable by this coupon if every item in it is eligible.
+    const eligibleSet = coupon.eligibleProductIds?.length
+      ? new Set(coupon.eligibleProductIds.map(String))
+      : null;
+    const orders = eligibleSet
+      ? pending.filter((order) => (order.items || []).every((item) => eligibleSet.has(String(item.productId))))
+      : pending;
+    const skipped = pending.length - orders.length;
+
     if (!orders.length) {
       await session.abortTransaction();
-      return res.status(400).json({ success: false, message: "No pending orders for this coupon" });
+      return res.status(400).json({
+        success: false,
+        message: skipped
+          ? `${skipped} order(s) contain products this coupon does not cover`
+          : "No pending orders for this coupon",
+      });
     }
 
     const totalKobo = orders.reduce((sum, order) => sum + (order.grossTotalKobo || 0), 0);
@@ -493,8 +528,9 @@ export const bulkFulfillmentPayment = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Paid ${orders.length} orders totaling ₦${(totalKobo / 100).toLocaleString()}`,
+      message: `Paid ${orders.length} orders totaling ₦${(totalKobo / 100).toLocaleString()}${skipped ? `. ${skipped} order(s) skipped: they contain products this coupon does not cover` : ""}`,
       ordersPaid: orders.length,
+      ordersSkipped: skipped,
       totalKobo,
     });
   } catch (error) {

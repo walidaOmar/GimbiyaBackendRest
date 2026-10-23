@@ -1,7 +1,6 @@
 import jwt from "jsonwebtoken";
 import { User } from "../models/user.model.js";
-
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
+import { getJwtSecret } from "../utils/jwtSecret.js";
 
 /**
  * verifyToken
@@ -20,7 +19,7 @@ export const verifyToken = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
     if (!decoded?.userId) {
       return res.status(401).json({ success: false, message: "Unauthorized — invalid token" });
     }
@@ -49,7 +48,7 @@ export const optionalVerifyToken = async (req, res, next) => {
   if (!token) return next();
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
     const user = decoded?.userId
       ? await User.findById(decoded.userId).select("-password")
       : null;

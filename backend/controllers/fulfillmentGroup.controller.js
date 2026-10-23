@@ -26,10 +26,7 @@ export const confirmFulfillmentGroup = async (req, res) => {
 
     const order = await Order.findById(group.orderId).select("buyerId orderRef").lean();
     if (order) {
-      notifyUser(String(order.buyerId), "fulfillment:confirmed", {
-        orderRef: order.orderRef,
-        message: "A merchant confirmed part of your order.",
-      });
+      notifyUser(String(order.buyerId), "fulfillment:confirmed", { orderRef: order.orderRef, message: "A merchant confirmed part of your order." });
     }
 
     res.json({ success: true, data: group });

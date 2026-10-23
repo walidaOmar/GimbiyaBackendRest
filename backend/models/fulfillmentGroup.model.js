@@ -25,7 +25,26 @@ const fulfillmentGroupSchema = new mongoose.Schema(
 
     riderId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     riderOtpHash: { type: String, default: null, select: false },
+    buyerOtpEnc: { type: String, default: null, select: false }, // the code encrypted, so the buyer can look it up again (never returned to anyone else)
     signatureStoragePath: { type: String, default: null },
+    otpAttempts: { type: Number, default: 0 },
+    otpLockedUntil: { type: Date, default: null },
+
+    // Money snapshot taken at checkout (integer kobo). entitlements are paid out when the OTP is accepted.
+    settlement: {
+      baseKobo: { type: Number, default: 0 },
+      listedKobo: { type: Number, default: 0 },
+      serviceKobo: { type: Number, default: 0 },
+      poolKobo: { type: Number, default: 0 },
+      feeKobo: { type: Number, default: 0 },
+      deliveryFeeKobo: { type: Number, default: 0 },
+      merchantKobo: { type: Number, default: 0 },
+      riderKobo: { type: Number, default: 0 },
+      affiliateKobo: { type: Number, default: 0 },
+      platformKobo: { type: Number, default: 0 },
+      customerKobo: { type: Number, default: 0 },
+    },
+    settledAt: { type: Date, default: null },
 
     readyDate: { type: Date, default: null },
     confirmedAt: { type: Date, default: null },

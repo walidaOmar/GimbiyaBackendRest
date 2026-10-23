@@ -99,6 +99,10 @@ const userSchema = new mongoose.Schema(
     monnifySubAccountCode: {
       type: String, default: null,
     },
+    walletLock: { type: Number, default: 0 }, // bumped inside withdrawal transactions so two requests cannot both spend the same balance
+    residentState: {
+      type: String, default: null, // state the person says they live in (coordinators: must match their node)
+    },
   },
   { timestamps: true }
 );

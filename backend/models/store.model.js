@@ -26,6 +26,10 @@ const storeSchema = new mongoose.Schema(
 
     businessOwnerId:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     onboardedBy:      { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    // KPI attribution: the affiliate officer who brought this store in (set by the coordinator / HQ)
+    referredByAffiliateId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, index: true },
+    referralAttributedBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    referralAttributedAt:  { type: Date, default: null },
 
     verificationStatus: {
       type: String,
@@ -62,6 +66,10 @@ const storeSchema = new mongoose.Schema(
     primaryCategory: { type: String, default: null, trim: true },
     secondarySubcategory: { type: String, default: null, trim: true },
     serviceCategory: { type: String, default: null },
+
+    // Subscription (Basic is free; Pro/Legendary are paid yearly). A lapsed paid tier acts as Basic.
+    subscriptionTier: { type: String, enum: ["BASIC", "PRO", "LEGENDARY"], default: "BASIC", index: true },
+    subscriptionExpiresAt: { type: Date, default: null },
 
     submittedBy: {
       type: mongoose.Schema.Types.ObjectId,

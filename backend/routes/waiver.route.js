@@ -1,6 +1,7 @@
 import express from "express";
 import {
   allocateQuota,
+  setQuotaProducts,
   getQuotas,
   getMyQuota,
   submitWaiverRequest,
@@ -18,8 +19,9 @@ router.get("/coupons/validate/:code", validateCoupon);
 
 router.use(verifyToken);
 
-router.post("/quotas", requireRole("super_admin"), allocateQuota);
-router.get("/quotas", requireRole("super_admin"), getQuotas);
+router.post("/quotas", requireRole("super_admin", "ceo"), allocateQuota);
+router.get("/quotas", requireRole("super_admin", "ceo"), getQuotas);
+router.put("/quotas/:quotaId/products", requireRole("super_admin", "ceo"), setQuotaProducts);
 
 router.get("/my-quota", requireRole("developer_coordinator"), getMyQuota);
 router.get("/requests/pending", requireRole("developer_coordinator"), getPendingRequests);

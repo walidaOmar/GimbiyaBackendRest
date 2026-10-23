@@ -4,6 +4,7 @@ import { WaiverQuota } from "../models/waiverQuota.model.js";
 import { WaiverRequest } from "../models/waiverRequest.model.js";
 import { FulfillmentCoupon } from "../models/fulfillmentCoupon.model.js";
 import { User } from "../models/user.model.js";
+import { Product } from "../models/product.model.js";
 import { googleSheetsService } from "../services/googleSheetsRuntime.js";
 import { notifyUser } from "../utils/sseService.js";
 
@@ -11,14 +12,32 @@ function generateCouponCode() {
   return "FUL-" + crypto.randomBytes(3).toString("hex").toUpperCase();
 }
 
+// HQ picks which products a waiver may cover. Empty list = every product is eligible.
+async function cleanProductIds(raw) {
+  if (raw === undefined) return { ids: undefined };
+  if (!Array.isArray(raw)) return { error: "eligibleProductIds must be a list" };
+  const unique = [...new Set(raw.map(String))];
+  if (unique.length > 200) return { error: "You can select at most 200 products" };
+  if (unique.some((id) => !mongoose.isValidObjectId(id))) return { error: "One or more product ids are invalid" };
+  const found = await Product.find({ _id: { $in: unique }, isActive: true }).select("_id").lean();
+  if (found.length !== unique.length) return { error: "One or more selected products do not exist or are inactive" };
+  return { ids: found.map((p) => p._id) };
+}
+
 export const allocateQuota = async (req, res) => {
   try {
-    const { coordinatorId, totalSlots, budgetKobo, note, expiresInDays = 30 } = req.body;
+    const { coordinatorId, totalSlots, budgetKobo, note, expiresInDays = 30, eligibleProductIds } = req.body;
 
     const coordinator = await User.findById(coordinatorId);
     if (!coordinator || coordinator.role !== "developer_coordinator") {
       return res.status(400).json({ success: false, message: "Invalid coordinator" });
     }
+    if (!Number.isInteger(Number(totalSlots)) || Number(totalSlots) < 1) {
+      return res.status(400).json({ success: false, message: "totalSlots must be a whole number of at least 1" });
+    }
+
+    const products = await cleanProductIds(eligibleProductIds);
+    if (products.error) return res.status(400).json({ success: false, message: products.error });
 
     const quota = await WaiverQuota.create({
       coordinatorId,
@@ -26,12 +45,29 @@ export const allocateQuota = async (req, res) => {
       totalSlots: Number(totalSlots),
       budgetKobo: Number(budgetKobo) || 0,
       note: note || "",
+      eligibleProductIds: products.ids || [],
       expiresAt: new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000),
     });
 
     res.status(201).json({ success: true, quota });
   } catch (error) {
     console.error("[allocateQuota]", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Changes the product list of an existing quota. Coupons already issued keep their own snapshot.
+export const setQuotaProducts = async (req, res) => {
+  try {
+    const products = await cleanProductIds(req.body.eligibleProductIds);
+    if (products.error || products.ids === undefined) {
+      return res.status(400).json({ success: false, message: products.error || "eligibleProductIds is required" });
+    }
+    const quota = await WaiverQuota.findByIdAndUpdate(req.params.quotaId, { $set: { eligibleProductIds: products.ids } }, { new: true });
+    if (!quota) return res.status(404).json({ success: false, message: "Quota not found" });
+    res.json({ success: true, quota });
+  } catch (error) {
+    console.error("[setQuotaProducts]", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -47,6 +83,7 @@ export const getQuotas = async (req, res) => {
       WaiverQuota.find(filter)
         .populate("coordinatorId", "name email assignedState")
         .populate("allocatedBy", "name")
+        .populate("eligibleProductIds", "name priceKobo assignedState")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit))
@@ -206,6 +243,7 @@ export const approveWaiverRequest = async (req, res) => {
         waiverRequestId: request._id,
         totalSlots: request.requestedSlots,
         eligibleUserIds: request.targetUserIds,
+        eligibleProductIds: quota.eligibleProductIds || [],
         budgetKobo: quota.budgetKobo > 0
           ? Math.floor(quota.budgetKobo / Math.max(1, quota.remainingSlots)) * request.requestedSlots
           : 0,

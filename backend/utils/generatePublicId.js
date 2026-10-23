@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { User } from "../models/user.model.js";
 
 /**
@@ -9,7 +10,7 @@ export const generatePublicId = async () => {
   const MAX_ATTEMPTS = 5;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const randomDigits = Math.floor(10000000 + Math.random() * 90000000);
+    const randomDigits = crypto.randomInt(10000000, 100000000);
     const candidate = `GM-${randomDigits}`;
 
     const existing = await User.exists({ publicId: candidate });

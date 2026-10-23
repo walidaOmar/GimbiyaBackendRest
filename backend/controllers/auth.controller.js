@@ -21,6 +21,7 @@ export const signup = async (req, res) => {
     if (typeof email !== "string" || typeof password !== "string" || typeof name !== "string" || !email.trim() || !password || !name.trim()) {
       return res.status(400).json({ success: false, message: "Name, email, and password are required" });
     }
+
     if (password.length < 6) {
       return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
     }
@@ -35,7 +36,7 @@ export const signup = async (req, res) => {
     }
 
     const hashedPassword      = await bcryptjs.hash(password, 10);
-    const verificationToken   = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationToken   = String(crypto.randomInt(100000, 1000000));
 
     const user = new User({
       email:                        normalizedEmail,
@@ -74,15 +75,17 @@ export const signup = async (req, res) => {
 
 // ── VERIFY EMAIL ──────────────────────────────────────────────────────────────
 export const verifyEmail = async (req, res) => {
-  const { code } = req.body;
+  const { code, email } = req.body;
 
   try {
-    if (!code) {
-      return res.status(400).json({ success: false, message: "Verification code is required" });
+    if (!code || !email) {
+      return res.status(400).json({ success: false, message: "Email and verification code are required" });
     }
 
+    // The code is bound to the email it was sent to, so a code cannot be guessed against "anyone".
     const user = await User.findOne({
-      verificationToken:          code,
+      email:                      String(email).toLowerCase(),
+      verificationToken:          String(code),
       verificationTokenExpiresAt: { $gt: Date.now() },
     });
 

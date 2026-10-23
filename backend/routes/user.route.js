@@ -1,5 +1,6 @@
 import express from "express";
-import { User } from "../models/user.model.js";
+import { User, USER_ROLES, NIGERIAN_STATES } from "../models/user.model.js";
+import { writeAuditLog } from "../utils/auditLogger.js";
 import { verifyToken, requireRole, requireVerified } from "../middleware/verifyToken.js";
 
 const router = express.Router();
@@ -91,13 +92,40 @@ router.patch(
     try {
       const { role, assignedState } = req.body;
       if (!role) return res.status(400).json({ success: false, message: "role is required" });
+      if (!USER_ROLES.includes(role)) {
+        return res.status(400).json({ success: false, message: "Unknown role" });
+      }
+      if (role === "super_admin") {
+        return res.status(403).json({ success: false, message: "super_admin cannot be granted through the API" });
+      }
+      if (assignedState && !NIGERIAN_STATES.includes(assignedState)) {
+        return res.status(400).json({ success: false, message: "Unknown market / node" });
+      }
+      if (String(req.params.id) === String(req.userId)) {
+        return res.status(400).json({ success: false, message: "You cannot change your own role" });
+      }
+
+      const before = await User.findById(req.params.id).select("role assignedState").lean();
+      if (!before) return res.status(404).json({ success: false, message: "User not found" });
+      if (before.role === "super_admin") {
+        return res.status(403).json({ success: false, message: "A super_admin account cannot be changed through the API" });
+      }
 
       const updates = { role };
       if (assignedState) updates.assignedState = assignedState;
 
-      const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true })
+      const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true })
         .select("-password");
-      if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+      await writeAuditLog({
+        action: "ROLE_CHANGED",
+        performedBy: req.userId,
+        targetType: "User",
+        targetId: user._id,
+        oldValue: before,
+        newValue: { role: user.role, assignedState: user.assignedState },
+        req,
+      });
 
       res.status(200).json({ success: true, user, message: "Role updated successfully" });
     } catch (error) {

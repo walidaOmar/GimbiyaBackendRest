@@ -60,8 +60,28 @@ export async function initiateTransfer({ amountNaira, reference, narration, bank
   return data.responseBody;
 }
 
+export async function listBanks() {
+  const token = await getAccessToken();
+  const { data } = await axios.get(`${BASE_URL}/api/v1/banks`, { headers: { Authorization: `Bearer ${token}` } });
+  return (data.responseBody || []).map((b) => ({ code: b.code, name: b.name }));
+}
+
+// Account-name lookup only works on the LIVE Monnify environment (verification APIs are live-only).
+export async function validateBankAccount({ accountNumber, bankCode }) {
+  const token = await getAccessToken();
+  const { data } = await axios.get(`${BASE_URL}/api/v2/disbursements/account/validate`, {
+    params: { accountNumber, bankCode },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return data.responseBody; // { accountNumber, accountName, bankCode }
+}
+
+export const isMonnifySandbox = () => BASE_URL.includes("sandbox");
+
 export function verifyWebhookSignature(rawBodyString, signatureHeader) {
   if (!rawBodyString || !signatureHeader || !SECRET_KEY) return false;
   const computed = crypto.createHmac("sha512", SECRET_KEY).update(rawBodyString).digest("hex");
-  return computed === signatureHeader;
+  const a = Buffer.from(computed, "utf8");
+  const b = Buffer.from(String(signatureHeader).trim().toLowerCase(), "utf8");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }

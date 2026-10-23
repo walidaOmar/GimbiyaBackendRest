@@ -1,8 +1,8 @@
 import mongoose from "mongoose";
 import { FulfillmentGroup } from "../models/fulfillmentGroup.model.js";
 import { Order } from "../models/order.model.js";
-import { EscrowLedger } from "../models/ledger.model.js";
-import { verifyOtp } from "../utils/otpService.js";
+import { releaseGroup } from "../services/settlementService.js";
+import { verifyOtp, recordOtpFailure, otpLockMinutesLeft } from "../utils/otpService.js";
 import { notifyUser } from "../utils/sseService.js";
 import { getFirebaseStorage } from "../config/firebase.js";
 
@@ -15,7 +15,7 @@ export const getAvailableJobsV2 = async (req, res) => {
     const orders = await Order.find({ assignedState: req.userState, isMultiMerchant: true }).select("_id orderRef").lean();
     const orderIds = orders.map((order) => order._id);
 
-    const jobs = await FulfillmentGroup.find({ orderId: { $in: orderIds }, status: "CONFIRMED", riderId: null })
+    const jobs = await FulfillmentGroup.find({ orderId: { $in: orderIds }, groupType: "PRODUCT", status: "CONFIRMED", riderId: null })
       .populate("orderId", "orderRef shippingAddress assignedState")
       .sort({ createdAt: 1 })
       .limit(50)
@@ -44,7 +44,7 @@ export const claimJobV2 = async (req, res) => {
   try {
     const { fulfillmentGroupId } = req.body;
     const group = await FulfillmentGroup.findOneAndUpdate(
-      { _id: fulfillmentGroupId, status: "CONFIRMED", riderId: null },
+      { _id: fulfillmentGroupId, groupType: "PRODUCT", status: "CONFIRMED", riderId: null },
       { $set: { riderId: req.userId, status: "DISPATCHED" } },
       { new: true }
     );
@@ -91,8 +91,19 @@ export const finalizeHandoverV2 = async (req, res) => {
     if (!group) return res.status(404).json({ success: false, message: "Active delivery not found or not assigned to you" });
     if (!group.riderOtpHash) return res.status(500).json({ success: false, message: "OTP configuration error on this fulfillment group" });
 
+    const lockedFor = otpLockMinutesLeft(group);
+    if (lockedFor > 0) {
+      return res.status(423).json({ success: false, message: `Too many wrong codes. Try again in ${lockedFor} minute(s), or contact support.` });
+    }
+
     const otpValid = await verifyOtp(submittedOtp, group.riderOtpHash);
-    if (!otpValid) return res.status(401).json({ success: false, message: "Invalid OTP." });
+    if (!otpValid) {
+      const result = await recordOtpFailure(FulfillmentGroup, group._id);
+      return res.status(401).json({
+        success: false,
+        message: result.locked ? "Too many wrong codes. This delivery is locked for a while." : `Invalid OTP. ${result.attemptsLeft} attempt(s) left.`,
+      });
+    }
 
     let signatureStoragePath;
     try {
@@ -110,31 +121,7 @@ export const finalizeHandoverV2 = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-      const groupGrossKobo = group.items.reduce((sum, item) => sum + item.subtotalKobo, 0);
-
-      group.status = "DELIVERED";
-      group.escrowStatus = "RELEASED";
-      group.signatureStoragePath = signatureStoragePath;
-      await group.save({ session });
-
-      await EscrowLedger.create([{
-        orderId: group.orderId,
-        fulfillmentGroupId: group._id,
-        entryType: "RELEASE",
-        grossTotalKobo: groupGrossKobo,
-        platformFeeKobo: 0,
-        merchantNetKobo: groupGrossKobo,
-        escrowStatus: "RELEASED",
-        actorId: req.userId,
-        noteText: `Escrow released for fulfillment group ${group._id}`,
-      }], { session });
-
-      const siblingGroups = await FulfillmentGroup.find({ orderId: group.orderId }).session(session).lean();
-      const allDelivered = siblingGroups.every((item) => item.status === "DELIVERED");
-      if (allDelivered) {
-        await Order.findByIdAndUpdate(group.orderId, { status: "DELIVERED", escrowStatus: "RELEASED" }, { session });
-      }
-
+      await releaseGroup(group, { session, actorId: req.userId });
       await session.commitTransaction();
     } catch (txErr) {
       await session.abortTransaction();
@@ -170,5 +157,47 @@ export const updateLocationV2 = async (req, res) => {
     res.status(200).json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// A service is finished when the customer gives the provider the code and the provider enters it.
+// Releases the service price to the provider's wallet. No rider is involved.
+export const completeServiceV2 = async (req, res) => {
+  try {
+    const { fulfillmentGroupId, submittedOtp } = req.body;
+    if (!fulfillmentGroupId || !/^\d{4}$/.test(String(submittedOtp || ""))) {
+      return res.status(400).json({ success: false, message: "fulfillmentGroupId and the 4-digit code are required" });
+    }
+    const group = await FulfillmentGroup.findOne({
+      _id: fulfillmentGroupId, merchantId: req.userId, groupType: "SERVICE", status: "CONFIRMED",
+    }).select("+riderOtpHash");
+    if (!group) return res.status(404).json({ success: false, message: "Confirmed service job not found" });
+
+    const lockedFor = otpLockMinutesLeft(group);
+    if (lockedFor > 0) return res.status(423).json({ success: false, message: `Too many wrong codes. Try again in ${lockedFor} minute(s).` });
+
+    if (!(await verifyOtp(String(submittedOtp), group.riderOtpHash))) {
+      const result = await recordOtpFailure(FulfillmentGroup, group._id);
+      return res.status(401).json({ success: false, message: result.locked ? "Too many wrong codes. This job is locked for a while." : `Invalid code. ${result.attemptsLeft} attempt(s) left.` });
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+      await releaseGroup(group, { session, actorId: req.userId });
+      await session.commitTransaction();
+    } catch (txErr) {
+      await session.abortTransaction();
+      throw txErr;
+    } finally {
+      session.endSession();
+    }
+
+    const order = await Order.findById(group.orderId).select("buyerId orderRef").lean();
+    if (order) notifyUser(order.buyerId.toString(), "fulfillment:status_changed", { fulfillmentGroupId: group._id, newStatus: "DELIVERED", message: "Your service was completed." });
+    res.json({ success: true, message: "Service completed. Payment released to your wallet." });
+  } catch (error) {
+    console.error("[completeServiceV2]", error);
+    res.status(500).json({ success: false, message: "Could not complete the service" });
   }
 };

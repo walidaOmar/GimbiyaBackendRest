@@ -10,6 +10,7 @@ const fulfillmentCouponSchema = new mongoose.Schema(
     waiverRequestId: { type: mongoose.Schema.Types.ObjectId, ref: "WaiverRequest", required: true },
     totalSlots: { type: Number, required: true, min: 1 },
     eligibleUserIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    eligibleProductIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }], // snapshot of HQ's product list; empty = all products
     usedSlots: { type: Number, default: 0, min: 0 },
     budgetKobo: { type: Number, default: 0, min: 0 },
     usedBudgetKobo: { type: Number, default: 0, min: 0 },

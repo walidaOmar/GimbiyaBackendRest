@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import { Order }        from "../models/order.model.js";
 import { EscrowLedger } from "../models/ledger.model.js";
-import { verifyOtp }    from "../utils/otpService.js";
+import { verifyOtp, recordOtpFailure, otpLockMinutesLeft } from "../utils/otpService.js";
 import { notifyUser }   from "../utils/sseService.js";
 import { getFirebaseStorage } from "../config/firebase.js";
 import { User } from "../models/user.model.js";
@@ -138,9 +138,18 @@ export const finalizeHandover = async (req, res) => {
     }
 
     // Step 1: Verify OTP against bcrypt hash
+    const lockedFor = otpLockMinutesLeft(order);
+    if (lockedFor > 0) {
+      return res.status(423).json({ success: false, message: `Too many wrong codes. Try again in ${lockedFor} minute(s), or contact support.` });
+    }
+
     const otpValid = await verifyOtp(submittedOtp, order.riderOtpHash);
     if (!otpValid) {
-      return res.status(401).json({ success: false, message: "Invalid OTP. The buyer must confirm the correct 4-digit code." });
+      const result = await recordOtpFailure(Order, order._id);
+      return res.status(401).json({
+        success: false,
+        message: result.locked ? "Too many wrong codes. This delivery is locked for a while." : `Invalid OTP. ${result.attemptsLeft} attempt(s) left. The buyer must confirm the correct 4-digit code.`,
+      });
     }
 
     // Step 2: Upload signature to Firebase Storage

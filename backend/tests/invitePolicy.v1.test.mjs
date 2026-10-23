@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import { canInvite, allowedBusinessTypes, isGlobalRole } from "../policy/invitePolicy.v1.js";
+assert.ok(canInvite("super_admin", "business_owner"));
+assert.ok(canInvite("ceo", "delivery"));
+assert.ok(canInvite("developer_coordinator", "manager"));
+assert.ok(canInvite("affiliate", "business_owner"));
+assert.ok(!canInvite("affiliate", "affiliate"));
+assert.ok(!canInvite("affiliate", "manager"));
+assert.ok(canInvite("business_owner", "stock_manager"));
+assert.ok(!canInvite("business_owner", "delivery"));
+assert.ok(!canInvite("buyer", "affiliate"));
+assert.ok(!canInvite("developer_coordinator", "developer_coordinator"));
+assert.deepEqual(allowedBusinessTypes("affiliate"), ["retailer"]);
+assert.equal(allowedBusinessTypes("super_admin").length, 4);
+assert.deepEqual(allowedBusinessTypes("business_owner"), []);
+assert.ok(isGlobalRole("auditor") && !isGlobalRole("affiliate"));
+console.log("invite policy tests passed");
